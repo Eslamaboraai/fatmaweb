@@ -26,12 +26,12 @@ const whatsappMessages = {
 const meta = {
   ar: {
     title: 'فاطمة مجدي | بناء الشخصية وإرشاد الوالدين',
-    description: 'فاطمة مجدي — بناء الشخصية، إرشاد الوالدين ودعم السلوك. تواصل عبر واتساب لمعرفة المزيد.',
+    description: 'فاطمة مجدي، معلمة ومرشدة — بناء الشخصية، إرشاد الوالدين ودعم السلوك. تواصل مع فاطمة عبر واتساب.',
     button: 'English', buttonLabel: 'Switch to English', buttonLang: 'en', menu: 'القائمة', photo: 'فاطمة مجدي'
   },
   en: {
     title: 'Fatma Magdy | Character & Parent Mentoring',
-    description: 'Fatma Magdy — character building, parent mentoring, and behavior support. Connect on WhatsApp to learn more.',
+    description: 'Fatma Magdy, teacher and mentor — character building, parent mentoring, and behavior support. Message Fatma on WhatsApp.',
     button: 'العربية', buttonLabel: 'التبديل إلى العربية', buttonLang: 'ar', menu: 'Menu', photo: 'Fatma Magdy'
   }
 };
@@ -46,14 +46,11 @@ function setLanguage(language) {
   document.querySelectorAll('[data-wa]').forEach(link => {
     link.href = `https://wa.me/${phone}?text=${encodeURIComponent(whatsappMessages[language][link.dataset.wa])}`;
   });
-  document.querySelectorAll('.wordmark-alt').forEach(element => {
-    element.lang = strings.buttonLang;
-  });
   languageButton.textContent = strings.button;
   languageButton.lang = strings.buttonLang;
   languageButton.setAttribute('aria-label', strings.buttonLabel);
   menuButton.setAttribute('aria-label', strings.menu);
-  document.querySelector('.arch-photo').alt = strings.photo;
+  document.querySelector('.hero-photo img').alt = strings.photo;
   document.title = strings.title;
   document.querySelector('meta[name="description"]').content = strings.description;
   try { localStorage.setItem('language', language); } catch (error) {}
@@ -85,24 +82,51 @@ document.addEventListener('click', event => {
 
 const hero = document.querySelector('.hero');
 const contact = document.querySelector('#contact');
+const navLinks = [...nav.querySelectorAll('a[href^="#"]')];
+const sections = navLinks.map(link => document.querySelector(link.getAttribute('href'))).filter(Boolean);
+
+// The active link is the last section whose top has passed the line just under the sticky header
+// A clicked link stays active until the visitor scrolls on their own
+let pinned = null;
+document.querySelectorAll('a[href^="#"]').forEach(link => link.addEventListener('click', () => {
+  const target = document.querySelector(link.getAttribute('href'));
+  pinned = sections.includes(target) ? target : null;
+  updateActiveLink();
+}));
+['wheel', 'touchstart'].forEach(type => addEventListener(type, () => { pinned = null; }, { passive: true }));
+addEventListener('keydown', event => {
+  if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) pinned = null;
+});
+
+function updateActiveLink() {
+  const line = header.offsetHeight + innerHeight * 0.25;
+  let current = null;
+  sections.forEach(section => {
+    if (section.getBoundingClientRect().top <= line) current = section;
+  });
+  if (innerHeight + scrollY >= document.documentElement.scrollHeight - 2) current = sections[sections.length - 1];
+  if (pinned) current = pinned;
+  else if (scrollY < 8) current = null;
+  navLinks.forEach(link => {
+    const active = current && link.getAttribute('href') === `#${current.id}`;
+    if (active) link.setAttribute('aria-current', 'true');
+    else link.removeAttribute('aria-current');
+  });
+}
+
+let ticking = false;
 function onScroll() {
-  header.classList.toggle('is-scrolled', scrollY > 8);
-  const pastHero = hero.getBoundingClientRect().bottom < 0;
-  const atContact = contact.getBoundingClientRect().top < innerHeight * 0.6;
-  fab.classList.toggle('is-visible', pastHero && !atContact);
+  if (ticking) return;
+  ticking = true;
+  requestAnimationFrame(() => {
+    header.classList.toggle('is-scrolled', scrollY > 8);
+    const pastHero = hero.getBoundingClientRect().bottom < 0;
+    const atContact = contact.getBoundingClientRect().top < innerHeight * 0.6;
+    fab.classList.toggle('is-visible', pastHero && !atContact);
+    updateActiveLink();
+    ticking = false;
+  });
 }
 addEventListener('scroll', onScroll, { passive: true });
+addEventListener('resize', onScroll);
 onScroll();
-
-// Highlight the nav link for the section in view
-const navLinks = [...nav.querySelectorAll('a[href^="#"]')];
-const observer = new IntersectionObserver(entries => {
-  entries.forEach(entry => {
-    if (!entry.isIntersecting) return;
-    navLinks.forEach(link => link.classList.toggle('is-active', link.getAttribute('href') === `#${entry.target.id}`));
-  });
-}, { rootMargin: '-45% 0px -50% 0px' });
-navLinks.forEach(link => {
-  const section = document.querySelector(link.getAttribute('href'));
-  if (section) observer.observe(section);
-});
