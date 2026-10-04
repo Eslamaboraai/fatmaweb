@@ -1,9 +1,9 @@
 const root = document.documentElement;
-const languageButton = document.querySelector('.language');
-const menuButton = document.querySelector('.menu-toggle');
-const nav = document.querySelector('.nav');
-const header = document.querySelector('.header');
-const fab = document.querySelector('.fab');
+const languageButton = document.querySelector('.lang-switch');
+const menuButton = document.querySelector('.menu-btn');
+const nav = document.querySelector('#site-nav');
+const header = document.querySelector('.site-header');
+const fab = document.querySelector('.wa-float');
 const phone = '201124489149';
 
 const whatsappMessages = {
@@ -46,11 +46,14 @@ function setLanguage(language) {
   document.querySelectorAll('[data-wa]').forEach(link => {
     link.href = `https://wa.me/${phone}?text=${encodeURIComponent(whatsappMessages[language][link.dataset.wa])}`;
   });
+  document.querySelectorAll('.wordmark-alt').forEach(element => {
+    element.lang = strings.buttonLang;
+  });
   languageButton.textContent = strings.button;
   languageButton.lang = strings.buttonLang;
   languageButton.setAttribute('aria-label', strings.buttonLabel);
   menuButton.setAttribute('aria-label', strings.menu);
-  document.querySelector('.portrait img').alt = strings.photo;
+  document.querySelector('.person-photo').alt = strings.photo;
   document.title = strings.title;
   document.querySelector('meta[name="description"]').content = strings.description;
   try { localStorage.setItem('language', language); } catch (error) {}
@@ -67,11 +70,11 @@ languageButton.addEventListener('click', () => {
 });
 
 function closeMenu() {
-  nav.classList.remove('open');
+  nav.classList.remove('is-open');
   menuButton.setAttribute('aria-expanded', 'false');
 }
 menuButton.addEventListener('click', () => {
-  const open = nav.classList.toggle('open');
+  const open = nav.classList.toggle('is-open');
   menuButton.setAttribute('aria-expanded', String(open));
 });
 nav.querySelectorAll('a').forEach(link => link.addEventListener('click', closeMenu));
@@ -83,10 +86,23 @@ document.addEventListener('click', event => {
 const hero = document.querySelector('.hero');
 const contact = document.querySelector('#contact');
 function onScroll() {
-  header.classList.toggle('scrolled', scrollY > 8);
+  header.classList.toggle('is-scrolled', scrollY > 8);
   const pastHero = hero.getBoundingClientRect().bottom < 0;
   const atContact = contact.getBoundingClientRect().top < innerHeight * 0.6;
-  fab.classList.toggle('show', pastHero && !atContact);
+  fab.classList.toggle('is-visible', pastHero && !atContact);
 }
 addEventListener('scroll', onScroll, { passive: true });
 onScroll();
+
+// Highlight the nav link for the section in view
+const navLinks = [...nav.querySelectorAll('a[href^="#"]')];
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(entry => {
+    if (!entry.isIntersecting) return;
+    navLinks.forEach(link => link.classList.toggle('is-active', link.getAttribute('href') === `#${entry.target.id}`));
+  });
+}, { rootMargin: '-45% 0px -50% 0px' });
+navLinks.forEach(link => {
+  const section = document.querySelector(link.getAttribute('href'));
+  if (section) observer.observe(section);
+});
