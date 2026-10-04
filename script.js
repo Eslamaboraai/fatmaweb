@@ -53,7 +53,7 @@ function setLanguage(language) {
   languageButton.lang = strings.buttonLang;
   languageButton.setAttribute('aria-label', strings.buttonLabel);
   menuButton.setAttribute('aria-label', strings.menu);
-  document.querySelector('.person-photo').alt = strings.photo;
+  document.querySelector('.arch-photo').alt = strings.photo;
   document.title = strings.title;
   document.querySelector('meta[name="description"]').content = strings.description;
   try { localStorage.setItem('language', language); } catch (error) {}
