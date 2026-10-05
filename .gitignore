@@ -5,3 +5,7 @@ Thumbs.db
 *.pem
 *.key
 node_modules/
+
+# Impeccable engine binary (re-downloaded and checksum-verified by the launcher)
+.claude/skills/impeccable/scripts/bin/
+.claude/settings.local.json
