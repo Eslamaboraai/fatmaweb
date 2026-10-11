@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ListGo Whiteboard Ad</title>
+<link rel="stylesheet" href="assets/fonts.css">
+<style>
+  html, body { margin: 0; background: #1d1f24; overflow: hidden; }
+  body.render { background: #fdfdfb; }
+  #stage { position: absolute; top: 0; left: 0; width: 1080px; height: 1920px; overflow: hidden; background: #fdfdfb; transform-origin: 0 0; }
+  #board { position: absolute; inset: 0; }
+  #board text { stroke: none; }
+  #cap { position: absolute; left: 70px; right: 70px; top: 1505px; display: flex; justify-content: center; pointer-events: none; }
+  #cap span { font: 600 42px/1.5 'IBM Plex Sans Arabic', sans-serif; color: #fff; background: rgba(35, 39, 47, .9);
+              padding: 14px 32px 18px; border-radius: 28px; text-align: center; max-width: 900px; }
+  #controls { position: fixed; bottom: 12px; left: 12px; color: #ddd; font: 14px sans-serif; direction: ltr; }
+  body.render #controls { display: none; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <svg id="board" width="1080" height="1920" viewBox="0 0 1080 1920" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <radialGradient id="paper" cx="50%" cy="42%" r="78%">
+        <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#ecedea"/>
+      </radialGradient>
+      <filter id="rough" x="-2%" y="-2%" width="104%" height="104%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.03" numOctaves="2" seed="7" result="n"/>
+        <feDisplacementMap in="SourceGraphic" in2="n" scale="3.2" xChannelSelector="R" yChannelSelector="G"/>
+      </filter>
+      <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+        <feDropShadow dx="10" dy="14" stdDeviation="10" flood-color="#000" flood-opacity=".22"/>
+      </filter>
+    </defs>
+    <rect width="1080" height="1920" fill="url(#paper)"/>
+    <g id="scenes"></g>
+    <image id="mark" href="assets/listgo-logo.png" x="40" y="70" width="210" height="75"/>
+    <g id="hand" filter="url(#shadow)"></g>
+  </svg>
+  <div id="cap"><span></span></div>
+</div>
+<div id="controls"><button id="play">▶ play</button> <span id="clock"></span></div>
+<script src="timings.js"></script>
+<script>
+'use strict';
+const W = 1080, H = 1920, NS = 'http://www.w3.org/2000/svg', SLIDE = 0.5;
+const C = { ink: '#23272F', teal: '#05737D', tealL: '#D3ECEE', amber: '#E9B640', amberL: '#FCEFC9', red: '#D9534F',
+            green: '#25D366', greenL: '#DCF8C6', skin: '#F3C9A2', gray: '#9AA3AD', grayL: '#EEF1F4', pants: '#3B4A5A' };
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, p) => a + (b - a) * p;
+const ease = {
+  inOut: p => p < .5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2,
+  out: p => 1 - Math.pow(1 - p, 3),
+  back: p => { const c1 = 1.9, c3 = c1 + 1; return 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2); },
+};
+const defs = document.querySelector('#board defs');
+let uid = 0;
+
+function E(tag, attrs = {}, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function G(markup, parent, attrs = {}) { const g = E('g', attrs, parent); g.innerHTML = markup; return g; }
+function rootPoint(el, x, y) { return new DOMPoint(x, y).matrixTransform(el.getCTM()); }
+
+/* ---------- scene engine ---------- */
+class Scene {
+  constructor(id) {
+    this.id = id;
+    this.root = E('g', { class: 'scene', filter: 'url(#rough)', stroke: C.ink, 'stroke-width': 6, fill: 'none',
+                         'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, document.getElementById('scenes'));
+    this.layer = this.root;
+    this.t = 0; this.acts = []; this.k = 1;
+  }
+  seq(at, dur, gap = 0.12) { const s = at ?? this.t; this.t = Math.max(this.t, s + dur + gap); return s; }
+  wait(d) { this.t += d; }
+  anim(at, dur, fn, advance = true) {
+    const s = advance ? this.seq(at, dur) : (at ?? this.t);
+    this.acts.push({ at: s, dur, fn: lt => fn(clamp((lt - s) / dur), lt) });
+    return s;
+  }
+
+  /* stroke-by-stroke reveal with the marker hand following the tip, then fills fade in */
+  draw(markup, { at, dur, parent, attrs = {}, speed = 1500, max = 2.2 } = {}) {
+    const g = typeof markup === 'string' ? G(markup, parent || this.layer, attrs) : markup;
+    const items = [...g.querySelectorAll('path,circle,ellipse,line,rect,polyline,polygon')]
+      .filter(e => getComputedStyle(e).stroke !== 'none' && !e.closest('[data-fade]'));
+    const lens = items.map(e => Math.max(1, e.getTotalLength()));
+    const total = lens.reduce((a, b) => a + b, 0);
+    const fades = [...g.querySelectorAll('text,image,[data-fade]')];
+    const fills = items.map(e => e.getAttribute('fill-opacity') || 1);
+    dur = dur ?? clamp(total / speed, .35, max);
+    const s = this.seq(at, dur);
+    items.forEach((e, i) => e.setAttribute('stroke-dasharray', `${lens[i]} ${lens[i] + 4}`));
+    const cum = []; lens.reduce((a, l, i) => (cum[i] = a, a + l), 0);
+    const fillAt = lt => clamp((lt - s - dur) / .3);
+    this.acts.push({ at: s, dur, fn: lt => {
+      const d = clamp((lt - s) / dur) * total, f = fillAt(lt);
+      items.forEach((e, i) => {
+        const p = clamp((d - cum[i]) / lens[i]);
+        e.style.visibility = p > 0 ? 'visible' : 'hidden';
+        e.setAttribute('stroke-dashoffset', lens[i] * (1 - p));
+        e.setAttribute('fill-opacity', fills[i] * f);
+      });
+      fades.forEach(e => e.style.opacity = f);
+    }, hand: p => {
+      const d = p * total; let i = cum.findIndex((c, j) => d <= c + lens[j]); if (i < 0) i = items.length - 1;
+      const e = items[i], pt = e.getPointAtLength(clamp(d - cum[i], 0, lens[i]));
+      return rootPoint(e, pt.x, pt.y);
+    } });
+    return g;
+  }
+
+  /* wipe any group into view (handwriting effect for text, logo reveal) */
+  wipe(g, { at, dur, dir = 'rtl', speed = 620, hand = true, max = 2 } = {}) {
+    const bb = g.getBBox(), id = 'clip' + uid++;
+    const r = E('rect', { x: bb.x - 12, y: bb.y - 30, width: 0, height: bb.height + 60 }, E('clipPath', { id }, defs));
+    g.setAttribute('clip-path', `url(#${id})`);
+    dur = dur ?? clamp(bb.width / speed, .35, max);
+    const s = this.seq(at, dur);
+    const edge = p => dir === 'rtl' ? bb.x + bb.width - bb.width * p : bb.x + bb.width * p;
+    this.acts.push({ at: s, dur, fn: lt => {
+      const p = clamp((lt - s) / dur), w = (bb.width + 24) * p;
+      r.setAttribute('width', w);
+      r.setAttribute('x', dir === 'rtl' ? bb.x + bb.width + 12 - w : bb.x - 12);
+    }, hand: hand && (p => rootPoint(g, edge(p), bb.y + bb.height * .62 + Math.sin(p * bb.width / 16) * bb.height * .16)) });
+    return g;
+  }
+
+  write(str, x, y, { size = 72, color = C.ink, font = 'Marhey', weight = 700, dir = 'rtl', anchor = 'middle', maxW = 960, parent, ...o } = {}) {
+    const g = E('g', {}, parent || this.layer);
+    const t = E('text', { x, y, 'font-size': size, 'font-family': font, 'font-weight': weight, fill: color,
+                          'text-anchor': anchor, direction: dir }, g);
+    t.textContent = str;
+    const w = t.getBBox().width;
+    if (w > maxW) t.setAttribute('font-size', size * maxW / w);
+    return this.wipe(g, { dir, ...o });
+  }
+
+  /* pop-in with overshoot (2D animation beats) */
+  pop(markup, { at, dur = .45, parent, origin, advance = .6 } = {}) {
+    const outer = E('g', {}, parent || this.layer);
+    if (typeof markup === 'string') outer.innerHTML = markup; else outer.appendChild(markup);
+    const bb = outer.getBBox();
+    const [cx, cy] = origin || [bb.x + bb.width / 2, bb.y + bb.height / 2];
+    const s = this.seq(at, dur * advance);
+    this.acts.push({ at: s, dur, fn: lt => {
+      const p = clamp((lt - s) / dur), k = p <= 0 ? 0.001 : ease.back(p);
+      outer.style.visibility = p > 0 ? 'visible' : 'hidden';
+      outer.setAttribute('transform', `translate(${cx} ${cy}) scale(${k}) translate(${-cx} ${-cy})`);
+    } });
+    return outer;
+  }
+
+  fade(markup, { at, dur = .4, parent } = {}) {
+    const g = typeof markup === 'string' ? G(markup, parent || this.layer) : markup;
+    this.anim(at, dur, p => g.style.opacity = p);
+    return g;
+  }
+
+  /* text node helper that doesn't animate by itself */
+  text(str, x, y, { size = 36, color = C.ink, font = 'IBM Plex Sans Arabic', weight = 700, anchor = 'middle', dir = 'rtl' } = {}) {
+    return `<text x="${x}" y="${y}" font-size="${size}" font-family="${font}" font-weight="${weight}" fill="${color}" text-anchor="${anchor}" direction="${dir}">${str}</text>`;
+  }
+
+  finish(dur) {
+    this.dur = dur;
+    const natural = Math.max(...this.acts.map(a => a.at + a.dur));
+    const room = dur - 0.95;
+    this.k = natural > room ? room / natural : 1;
+  }
+
+  update(lt) {
+    const l = lt / this.k;
+    for (const a of this.acts) a.fn(l);
+  }
+
+  handAt(lt) {
+    const l = lt / this.k, ev = this.acts.filter(a => a.hand);
+    const off = { x: W + 320, y: H + 260 };
+    if (!ev.length) return off;
+    const cur = ev.find(a => l >= a.at && l <= a.at + a.dur);
+    if (cur) return cur.hand((l - cur.at) / cur.dur);
+    const prev = [...ev].reverse().find(a => a.at + a.dur < l), next = ev.find(a => a.at > l);
+    const pPrev = prev ? prev.hand(1) : off, pNext = next ? next.hand(0) : off;
+    const t0 = prev ? prev.at + prev.dur : l - 10, t1 = next ? next.at : l + 10, gap = t1 - t0;
+    if (gap < 1.1) { const p = ease.inOut(clamp((l - t0) / gap)); return { x: lerp(pPrev.x, pNext.x, p), y: lerp(pPrev.y, pNext.y, p) }; }
+    if (l - t0 < .45) { const p = ease.inOut((l - t0) / .45); return { x: lerp(pPrev.x, off.x, p), y: lerp(pPrev.y, off.y, p) }; }
+    if (t1 - l < .45) { const p = ease.inOut(1 - (t1 - l) / .45); return { x: lerp(off.x, pNext.x, p), y: lerp(off.y, pNext.y, p) }; }
+    return off;
+  }
+}
+
+/* ---------- reusable drawings ---------- */
+function merchant({ mood = 'happy', pose = 'down' } = {}) {
+  const face = mood === 'happy'
+    ? `<path d="M-40,-508 Q-28,-524 -16,-508 M16,-508 Q28,-524 40,-508" stroke-width="7"/>
+       <path d="M-44,-540 L-14,-542 M44,-540 L14,-542" stroke-width="7"/>
+       <path d="M-30,-452 Q0,-418 30,-452" fill="#fff"/>`
+    : `<circle cx="-28" cy="-510" r="8" fill="${C.ink}"/><circle cx="28" cy="-510" r="8" fill="${C.ink}"/>
+       <path d="M-46,-530 L-14,-546 M46,-530 L14,-546" stroke-width="7"/>
+       <path d="M-22,-444 Q-11,-454 0,-444 Q11,-434 22,-444"/>
+       <path d="M102,-575 Q88,-548 102,-536 Q116,-548 102,-575 Z" fill="#A9DBF5" stroke-width="4"/>`;
+  const arm = (d, hx, hy) => `<path d="${d}" stroke-width="42"/><path d="${d}" stroke="${C.amberL}" stroke-width="30" data-fade="1"/>
+       <circle cx="${hx}" cy="${hy}" r="24" fill="${C.skin}"/>`;
+  const leftArm = arm('M-112,-372 Q-165,-285 -150,-200', -150, -186);
+  const rightArm = {
+    down: arm('M112,-372 Q165,-285 150,-200', 150, -186),
+    phone: `<rect x="62" y="-372" width="72" height="120" rx="12" fill="#fff"/><line x1="88" y1="-358" x2="108" y2="-358" stroke-width="4"/>`
+           + arm('M112,-372 Q175,-300 128,-262', 118, -262),
+    thumb: arm('M112,-372 Q190,-410 178,-492', 178, -505) + `<rect x="168" y="-575" width="22" height="58" rx="11" fill="${C.skin}"/>`,
+  }[pose];
+  return `
+    <path d="M-95,-175 L-102,-18 L-14,-18 L-4,-128 L4,-128 L14,-18 L102,-18 L95,-175 Z" fill="${C.pants}"/>
+    <path d="M-106,-18 Q-112,6 -64,6 L-8,6 Q-4,-18 -14,-18 Z" fill="${C.ink}"/>
+    <path d="M106,-18 Q112,6 64,6 L8,6 Q4,-18 14,-18 Z" fill="${C.ink}"/>
+    <path d="M-112,-170 L-122,-360 Q-118,-402 -60,-412 L60,-412 Q118,-402 122,-360 L112,-170 Z" fill="${C.amberL}"/>
+    <path d="M-74,-388 L74,-388 L90,-150 L-90,-150 Z" fill="${C.teal}"/>
+    <rect x="-40" y="-282" width="80" height="56" rx="8" stroke="#fff" stroke-width="4"/>
+    ${leftArm}${rightArm}
+    <path d="M-24,-412 L-24,-436 M24,-412 L24,-436"/>
+    <circle cx="0" cy="-505" r="78" fill="${C.skin}"/>
+    <path d="M-77,-520 Q-100,-505 -78,-478 M77,-520 Q100,-505 78,-478" fill="${C.skin}"/>
+    <path d="M-80,-522 Q-84,-592 -18,-597 Q52,-602 80,-528 Q58,-562 18,-556 Q-30,-568 -80,-522 Z" fill="${C.ink}"/>
+    <path d="M0,-505 Q-9,-482 7,-480"/>
+    <path d="M-40,-468 Q-20,-486 0,-472 Q20,-486 40,-468 Q20,-458 0,-463 Q-20,-458 -40,-468 Z" fill="${C.ink}" stroke-width="3"/>
+    ${face}`;
+}
+
+function phone(x, y, w, h, screen = '#F4F7F8') {
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${w * .12}" fill="#fff"/>
+    <rect x="${x + 14}" y="${y + 60}" width="${w - 28}" height="${h - 120}" rx="12" fill="${screen}" stroke-width="3"/>
+    <line x1="${x + w / 2 - 34}" y1="${y + 32}" x2="${x + w / 2 + 34}" y2="${y + 32}"/>
+    <circle cx="${x + w / 2}" cy="${y + h - 31}" r="15" stroke-width="4"/>`;
+}
+
+function bubble(s, cx, cy, str, { fill = '#fff', size = 40, tail = 'left', color = C.ink } = {}) {
+  const g = E('g', {}, s.layer);
+  g.innerHTML = s.text(str, cx, cy + size * .36, { size, color });
+  const bb = g.getBBox(), w = bb.width + 56, h = size * 1.9, x = cx - w / 2, y = cy - h / 2;
+  const tx = tail === 'left' ? x + 34 : x + w - 34, dx = tail === 'left' ? -26 : 26;
+  const shape = E('path', { d: `M${x + 22},${y} H${x + w - 22} Q${x + w},${y} ${x + w},${y + 22} V${y + h - 22} Q${x + w},${y + h} ${x + w - 22},${y + h}
+      H${tx + 20} L${tx + dx},${y + h + 30} L${tx - 4},${y + h} H${x + 22} Q${x},${y + h} ${x},${y + h - 22} V${y + 22} Q${x},${y} ${x + 22},${y} Z`,
+      fill, 'stroke-width': 5 });
+  g.insertBefore(shape, g.firstChild);
+  return g;
+}
+
+function pictureIcon(x, y, w, h, fill = C.tealL) {
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="12" fill="${fill}" stroke-width="4"/>
+    <circle cx="${x + w * .72}" cy="${y + h * .32}" r="${h * .12}" fill="${C.amber}" stroke-width="3"/>
+    <path d="M${x + w * .1},${y + h * .85} L${x + w * .38},${y + h * .45} L${x + w * .58},${y + h * .7} L${x + w * .7},${y + h * .58} L${x + w * .9},${y + h * .85} Z" fill="${C.teal}" stroke-width="3"/>`;
+}
+
+function heart(x, y, k = 1, fill = C.red) {
+  return `<path transform="translate(${x} ${y}) scale(${k})" d="M0,12 C-10,-2 -26,4 -22,18 C-18,30 0,40 0,40 C0,40 18,30 22,18 C26,4 10,-2 0,12 Z" fill="${fill}" stroke-width="4"/>`;
+}
+
+/* ---------- the eight scenes ---------- */
+const BUILD = {
+  hook(s) {
+    s.write('زباينك مش بيبطّلوا أسئلة!', 540, 270, { size: 74 });
+    s.draw(merchant({ mood: 'worried', pose: 'phone' }), { attrs: { transform: 'translate(330 1270) scale(1.15)' }, dur: 2 });
+    const qs = [['بكام ده؟', 770, 470], ['لسه موجود؟', 800, 640], ['فيه مقاس تاني؟', 730, 810], ['بكام؟؟', 840, 980], ['ردّ يا معلّم!', 760, 1140]];
+    qs.forEach(([q, x, y], i) => s.pop(bubble(s, x, y, q, { fill: i % 2 ? C.greenL : '#fff', size: 42 }), { dur: .4, advance: .75 }));
+    const badge = s.pop(`<circle cx="500" cy="850" r="40" fill="${C.red}" stroke-width="5"/>` + s.text('+99', 500, 864, { size: 34, color: '#fff', dir: 'ltr' }));
+    s.draw(`<path d="M530,905 Q548,925 530,945 M552,895 Q578,925 552,958 M418,905 Q400,925 418,945"/>`, { dur: .3 });
+    s.anim(null, 1.2, p => badge.firstChild.setAttribute('transform', `rotate(${Math.sin(p * 40) * 10 * (1 - p)} 500 850)`), false);
+  },
+
+  pain(s) {
+    s.write('صورة صورة.. وسعر سعر', 540, 270, { size: 80 });
+    s.draw(phone(140, 410, 400, 760) + `<rect x="154" y="470" width="372" height="76" fill="${C.teal}" stroke-width="3"/>` +
+           s.text('زبون', 340, 520, { color: '#fff', size: 34 }), { dur: .9 });
+    [585, 745, 905].forEach((y, i) => s.pop(
+      `<rect x="250" y="${y}" width="256" height="140" rx="18" fill="${C.greenL}" stroke-width="4"/>` +
+      pictureIcon(300, y + 14, 120, 90) + s.text(['250 ج', '450 ج', '690 ج'][i], 460, y + 126, { size: 26 }), { dur: .4, advance: .9 }));
+    s.pop(bubble(s, 290, 1088, 'وده بكام؟', { size: 30, tail: 'right' }), { dur: .35 });
+    const clock = s.draw(`<circle cx="820" cy="600" r="120" fill="#fff"/><circle cx="820" cy="600" r="8" fill="${C.ink}"/>
+      <path d="M820,495 V510 M820,690 V705 M715,600 H730 M910,600 H925"/>
+      <g data-fade="1"><line class="mh" x1="820" y1="600" x2="820" y2="520" stroke-width="7"/><line class="hh" x1="820" y1="600" x2="870" y2="600" stroke-width="9"/></g>`, { dur: .9 });
+    s.anim(0, 99, (p, lt) => {
+      clock.querySelector('.mh').setAttribute('transform', `rotate(${lt * 260} 820 600)`);
+      clock.querySelector('.hh').setAttribute('transform', `rotate(${lt * 22} 820 600)`);
+    }, false);
+    s.draw(`<path d="M700,905 H890 Q910,905 910,925 V1005 Q910,1025 890,1025 H700 L645,965 Z" fill="${C.amberL}"/>
+            <circle cx="680" cy="965" r="11"/>` + s.text('150 ج', 795, 985, { size: 50 }), { dur: .8 });
+    s.draw(`<path d="M715,1000 L885,930" stroke="${C.red}" stroke-width="12"/>`, { dur: .3 });
+    s.write('175 ج', 800, 1120, { size: 68, color: C.red, font: 'Marhey' });
+    s.write('ولو السعر اتغيّر؟ تعيد من الأول!', 540, 1370, { size: 60, color: C.red });
+  },
+
+  solution(s) {
+    s.write('الحل؟', 540, 300, { size: 130, color: C.teal });
+    s.draw(`<path d="M540,450 C468,450 428,505 428,562 C428,614 465,644 480,676 L480,716 L600,716 L600,676 C615,644 652,614 652,562 C652,505 612,450 540,450 Z" fill="${C.amberL}"/>
+            <path d="M490,738 H590 M498,760 H582"/><path d="M510,650 Q525,598 540,650 Q555,598 570,650" stroke="${C.amber}" stroke-width="6"/>`, { dur: 1 });
+    s.pop(`<path d="M540,410 V380 M650,450 L672,428 M430,450 L408,428 M690,560 H722 M390,560 H358" stroke="${C.amber}" stroke-width="10"/>`, { dur: .4 });
+    const logo = E('g', {}, s.layer);
+    E('image', { href: 'assets/listgo-logo.png', x: 130, y: 860, width: 820, height: 294 }, logo);
+    s.wipe(logo, { dir: 'ltr', dur: 1.2 });
+    s.write('قائمة أسعار محلّك في لينك واحد', 540, 1330, { size: 62 });
+    s.draw(`<path d="M190,1370 Q540,1345 890,1372" stroke="${C.amber}" stroke-width="12"/>`, { dur: .4 });
+  },
+
+  how(s) {
+    s.write('ضيف منتجاتك في دقايق', 540, 260, { size: 80 });
+    s.draw(phone(290, 360, 500, 830) + `<rect x="304" y="420" width="472" height="92" fill="${C.teal}" stroke-width="3"/>` +
+           s.text('محلّك', 540, 480, { color: '#fff', size: 42 }), { dur: 1 });
+    [['تيشيرت قطن', '250 ج.م'], ['بنطلون جينز', '450 ج.م'], ['كوتشي رياضي', '690 ج.م'], ['شنطة جلد', '380 ج.م']].forEach(([n, p], i) => {
+      const y = 532 + i * 138;
+      s.pop(`<rect x="322" y="${y}" width="436" height="122" rx="16" fill="#fff" stroke-width="4"/>` + pictureIcon(638, y + 16, 104, 90) +
+            s.text(n, 618, y + 54, { size: 36, anchor: 'start' }) + s.text(p, 618, y + 100, { size: 32, color: C.teal, anchor: 'start' }), { dur: .4, advance: .85 });
+    });
+    s.pop(`<circle cx="740" cy="1110" r="38" fill="${C.amber}" stroke-width="5"/><path d="M740,1092 V1128 M722,1110 H758" stroke-width="7"/>`, { dur: .35 });
+    s.draw(`<rect x="170" y="1250" width="740" height="104" rx="52" fill="#fff" stroke="${C.teal}" stroke-width="7"/>
+            <g transform="rotate(-40 236 1302)"><rect x="200" y="1290" width="44" height="26" rx="13" stroke="${C.teal}" stroke-width="7"/><rect x="230" y="1290" width="44" height="26" rx="13" stroke="${C.teal}" stroke-width="7"/></g>`, { dur: .7 });
+    s.write('listgo.shop/mahalak', 575, 1320, { size: 50, font: 'IBM Plex Sans Arabic', dir: 'ltr', color: C.teal, maxW: 600 });
+  },
+
+  share(s) {
+    s.write('ابعته لزباينك', 540, 250, { size: 84 });
+    s.pop(`<rect x="250" y="320" width="580" height="88" rx="44" fill="#fff" stroke="${C.teal}" stroke-width="6"/>` +
+          s.text('listgo.shop/mahalak', 540, 378, { size: 40, color: C.teal, dir: 'ltr' }), { dur: .4 });
+    s.draw(`<path d="M420,420 Q260,450 215,560"/><path d="M190,535 L213,565 L240,540"/>
+            <path d="M540,420 V560"/><path d="M515,535 L540,565 L565,535"/>
+            <path d="M660,420 Q820,450 865,560"/><path d="M840,540 L867,565 L890,535"/>`, { dur: .8 });
+    [[215, C.teal, 0], [540, C.amber, 1], [865, C.red, 2]].forEach(([x, col, i]) => {
+      s.draw(`<path d="M${x - 88},860 Q${x - 88},780 ${x},780 Q${x + 88},780 ${x + 88},860 Z" fill="${col}"/>
+              <circle cx="${x}" cy="705" r="58" fill="${C.skin}"/>
+              ${i === 1 ? `<path d="M${x - 62},700 Q${x - 70},630 ${x},632 Q${x + 70},630 ${x + 62},700 Q${x + 40},655 ${x},660 Q${x - 40},655 ${x - 62},700 Z" fill="${C.ink}"/>`
+                        : `<path d="M${x - 56},690 Q${x - 50},640 ${x},640 Q${x + 50},640 ${x + 56},690 Q${x + 20},665 ${x - 56},690 Z" fill="${i ? '#7A4B2A' : C.ink}"/>`}
+              <circle cx="${x - 20}" cy="705" r="6" fill="${C.ink}"/><circle cx="${x + 20}" cy="705" r="6" fill="${C.ink}"/>
+              <path d="M${x - 20},730 Q${x},748 ${x + 20},730"/>`, { dur: .55 });
+    });
+    [215, 540, 865].forEach(x => s.pop(heart(x + 50, 610, 1.2), { dur: .35, advance: .4 }));
+    s.draw(`<rect x="120" y="900" width="840" height="430" rx="30" fill="#fff"/>
+            <rect x="160" y="940" width="760" height="92" rx="46" fill="${C.grayL}" stroke-width="4"/>
+            <circle cx="864" cy="982" r="20" stroke-width="6"/><path d="M850,996 L834,1012" stroke-width="7"/>`, { dur: .8 });
+    const typed = E('text', { x: 815, y: 1000, 'font-size': 42, 'font-family': 'IBM Plex Sans Arabic', 'font-weight': 700, fill: C.ink, 'text-anchor': 'start' }, s.layer);
+    const word = 'جينز';
+    s.anim(null, .8, p => { const n = Math.round(p * word.length); typed.textContent = word.slice(0, n) + (p < 1 && n < word.length ? '|' : ''); });
+    s.pop(`<rect x="160" y="1056" width="760" height="118" rx="18" fill="${C.amberL}" stroke-width="4"/>` + pictureIcon(790, 1070, 110, 90) +
+          s.text('بنطلون جينز', 770, 1108, { size: 38, anchor: 'start' }) + s.text('450 ج.م', 770, 1152, { size: 32, color: C.teal, anchor: 'start' }), { dur: .4 });
+    const modes = s.pop(`
+      <g><rect x="345" y="1205" width="90" height="90" rx="18" fill="#fff" stroke-width="4"/><rect x="365" y="1225" width="22" height="22" fill="${C.teal}" stroke="none"/><rect x="393" y="1225" width="22" height="22" fill="${C.teal}" stroke="none"/><rect x="365" y="1253" width="22" height="22" fill="${C.teal}" stroke="none"/><rect x="393" y="1253" width="22" height="22" fill="${C.teal}" stroke="none"/></g>
+      <g><rect x="495" y="1205" width="90" height="90" rx="18" fill="#fff" stroke-width="4"/><rect x="513" y="1225" width="18" height="18" fill="${C.teal}" stroke="none"/><path d="M539,1234 H568 M539,1266 H568" stroke-width="6"/><rect x="513" y="1257" width="18" height="18" fill="${C.teal}" stroke="none"/></g>
+      <g><rect x="645" y="1205" width="90" height="90" rx="18" fill="#fff" stroke-width="4"/><path d="M665,1228 H715 M665,1250 H715 M665,1272 H700" stroke-width="6"/></g>`, { dur: .4 });
+    s.anim(null, 1.2, p => [...modes.children].forEach((g, i) => g.firstElementChild.setAttribute('fill', Math.min(2, Math.floor(p * 3)) === i && p > 0 ? C.amber : '#fff')));
+  },
+
+  order(s) {
+    s.write('عايز يطلب؟', 540, 250, { size: 92 });
+    s.draw(phone(80, 360, 420, 800) + pictureIcon(126, 440, 328, 270) +
+           s.text('بنطلون جينز', 290, 780, { size: 40 }) + s.text('450 ج.م', 290, 836, { size: 36, color: C.teal }), { dur: 1.1 });
+    s.draw(merchant({ mood: 'happy', pose: 'phone' }), { attrs: { transform: 'translate(810 1260) scale(.95)' }, dur: 1.3 });
+    const btn = s.pop(`<rect x="120" y="900" width="340" height="104" rx="52" fill="${C.green}" stroke-width="5"/>
+      <circle cx="420" cy="952" r="24" fill="#fff" stroke="#fff" stroke-width="2"/><path d="M410,942 Q408,960 430,963" stroke="${C.green}" stroke-width="7"/>` +
+      s.text('اطلب على واتساب', 262, 964, { size: 30, color: '#fff' }), { dur: .45 });
+    // pointer finger taps the button
+    const finger = G(`<g transform="rotate(-24)"><rect x="-21" y="0" width="42" height="150" rx="21" fill="${C.skin}"/>
+        <rect x="-62" y="110" width="140" height="150" rx="56" fill="${C.skin}"/><path d="M-20,150 Q8,160 26,150 M22,170 Q44,178 62,168"/>
+        <rect x="-52" y="250" width="124" height="420" fill="${C.teal}"/></g>`, s.layer, { filter: 'url(#shadow)' });
+    const ripple = E('circle', { cx: 300, cy: 952, r: 0, stroke: '#fff', 'stroke-width': 8, opacity: 0 }, s.layer);
+    s.anim(null, 1.1, p => {
+      const inP = ease.out(clamp(p / .5)), press = p > .5 && p < .68 ? .92 : 1, outP = ease.inOut(clamp((p - .72) / .28));
+      const x = lerp(lerp(760, 300, inP), 760, outP), y = lerp(lerp(1950, 958, inP), 1950, outP);
+      finger.setAttribute('transform', `translate(${x} ${y}) scale(${press})`);
+      const r = clamp((p - .55) / .45);
+      ripple.setAttribute('r', 20 + r * 150); ripple.setAttribute('opacity', r > 0 ? 1 - r : 0);
+      btn.style.filter = p > .5 && p < .75 ? 'brightness(1.15)' : '';
+    });
+    s.draw(`<path d="M330,890 Q520,560 760,480" stroke="${C.green}" stroke-width="6" stroke-dasharray="4 18"/>`, { dur: .6 });
+    s.pop(bubble(s, 800, 470, 'عايز واحد مقاس 32', { fill: C.greenL, size: 38, tail: 'left' }), { dur: .45 });
+    s.pop(`<path d="M960,640 l10,-28 l10,28 l28,10 l-28,10 l-10,28 l-10,-28 l-28,-10 Z" fill="${C.amber}" stroke-width="4"/>
+           <path d="M650,700 l7,-20 l7,20 l20,7 l-20,7 l-7,20 l-7,-20 l-20,-7 Z" fill="${C.amber}" stroke-width="4"/>`, { dur: .4 });
+    s.write('والطلب يوصلك على طول!', 540, 1385, { size: 66, color: C.teal });
+  },
+
+  benefits(s) {
+    s.write('ليه ListGo؟', 540, 260, { size: 96 });
+    s.draw(`<rect x="140" y="380" width="800" height="920" rx="36" fill="${C.tealL}"/>
+            <rect x="180" y="450" width="720" height="810" rx="16" fill="#fff"/>
+            <rect x="410" y="345" width="260" height="80" rx="22" fill="${C.gray}"/>`, { dur: 1 });
+    ['من غير ما تعمل موقع', 'من غير وجع دماغ', 'عدّل السعر في ثانية', 'واللينك زي ما هو!'].forEach((str, i) => {
+      const y = 600 + i * 175;
+      s.draw(`<rect x="790" y="${y - 54}" width="66" height="66" rx="12" fill="#fff" stroke-width="6"/>`, { dur: .25 });
+      s.write(str, 760, y, { size: 54, anchor: 'start', maxW: 540 });
+      s.draw(`<path d="M802,${y - 24} L820,${y - 4} L858,${y - 58}" stroke="${C.teal}" stroke-width="13"/>`, { dur: .3 });
+    });
+  },
+
+  cta(s) {
+    const logo = E('g', {}, s.layer);
+    E('image', { href: 'assets/listgo-logo.png', x: 190, y: 300, width: 700, height: 251 }, logo);
+    s.wipe(logo, { dir: 'ltr', dur: 1 });
+    s.write('جرّب ببلاش 14 يوم', 540, 740, { size: 100 });
+    s.draw(`<path d="M200,790 Q540,758 880,792" stroke="${C.amber}" stroke-width="16"/>`, { dur: .4 });
+    s.draw(`<rect x="160" y="850" width="130" height="86" rx="12" fill="${C.amberL}"/><path d="M160,878 H290" stroke-width="10"/>
+            <path d="M150,950 L300,836" stroke="${C.red}" stroke-width="9"/>`, { dur: .5 });
+    s.write('ومن غير فيزا', 590, 918, { size: 70 });
+    const btn = s.pop(`<rect x="230" y="1000" width="620" height="150" rx="75" fill="${C.teal}" stroke-width="6"/>` +
+                      s.text('ابدأ مجانًا', 540, 1100, { size: 70, color: '#fff', font: 'Marhey' }), { dur: .5 });
+    s.write('listgo.shop', 540, 1320, { size: 110, font: 'IBM Plex Sans Arabic', dir: 'ltr', color: C.ink });
+    s.draw(`<path d="M250,1360 Q540,1388 830,1356" stroke="${C.amber}" stroke-width="14"/>`, { dur: .4 });
+    s.pulse = btn;
+  },
+};
+
+/* ---------- hand graphic (tip at 0,0) ---------- */
+document.getElementById('hand').innerHTML = `
+  <g transform="rotate(28)" stroke="${C.ink}" stroke-width="4" stroke-linejoin="round">
+    <path d="M250,-28 L760,-60 L790,170 L262,118 Z" fill="${C.teal}"/>
+    <path d="M2,0 L38,-15 L38,15 Z" fill="${C.ink}"/>
+    <rect x="36" y="-21" width="250" height="42" rx="8" fill="${C.amber}"/>
+    <rect x="236" y="-23" width="64" height="46" rx="8" fill="${C.ink}"/>
+    <ellipse cx="210" cy="44" rx="98" ry="74" fill="${C.skin}"/>
+    <rect x="96" y="-8" width="44" height="74" rx="22" fill="${C.skin}"/>
+    <rect x="134" y="-6" width="44" height="82" rx="22" fill="${C.skin}"/>
+    <rect x="172" y="-4" width="44" height="84" rx="22" fill="${C.skin}"/>
+    <path d="M168,-30 Q118,-56 98,-28 Q104,-8 168,-6 Z" fill="${C.skin}"/>
+    <path d="M262,118 L250,-28" stroke-width="6"/>
+  </g>`;
+
+/* ---------- timeline ---------- */
+const T = window.TIMINGS;
+let scenes, hand, mark, cap, capBox;
+(async () => {
+await Promise.all(['700 80px Marhey', '700 40px "IBM Plex Sans Arabic"', '600 40px "IBM Plex Sans Arabic"'].map(f => document.fonts.load(f, 'بكام ListGo 14')));
+await new Promise(r => { const i = new Image(); i.onload = i.onerror = r; i.src = 'assets/listgo-logo.png'; });
+scenes = T.scenes.map(sc => {
+  const s = new Scene(sc.id);
+  BUILD[sc.id](s);
+  s.finish(sc.dur);
+  Object.assign(s, sc);
+  return s;
+});
+hand = document.getElementById('hand'); mark = document.getElementById('mark');
+cap = document.querySelector('#cap span'); capBox = document.getElementById('cap');
+
+function seek(t) {
+  let handScene = null;
+  scenes.forEach((s, i) => {
+    const lt = t - s.start, last = i === scenes.length - 1;
+    const visible = (lt >= -SLIDE || i === 0) && (lt <= s.dur || last);
+    s.root.style.display = visible ? '' : 'none';
+    if (!visible) return;
+    let x = 0;
+    if (lt < 0) x = -W * ease.inOut(clamp(-lt / SLIDE));
+    else if (!last && lt > s.dur - SLIDE) x = W * ease.inOut(clamp((lt - (s.dur - SLIDE)) / SLIDE));
+    s.root.setAttribute('transform', `translate(${x} 0)`);
+    s.update(Math.max(lt, 0));
+    if (lt >= 0 && x === 0) handScene = s;
+    if (s.pulse && lt > s.dur * .55) {
+      const k = 1 + Math.sin((lt - s.dur * .55) * 6) * .035;
+      s.pulse.setAttribute('transform', s.pulse.getAttribute('transform') + ` translate(540 1075) scale(${k}) translate(-540 -1075)`);
+    }
+  });
+  const p = handScene ? handScene.handAt(t - handScene.start) : { x: W + 320, y: H + 260 };
+  hand.setAttribute('transform', `translate(${p.x} ${p.y}) rotate(${Math.sin(t * 2.3) * 2.5})`);
+
+  const cur = scenes.find(s => t >= s.start && t < s.start + s.dur) || scenes[scenes.length - 1];
+  const lt = t - cur.start;
+  cap.textContent = cur.caption;
+  const lastScene = cur === scenes[scenes.length - 1];
+  capBox.style.opacity = clamp(Math.min((lt - .05) / .2, lastScene ? 1 : (cur.dur - .45 - lt) / .2));
+  const solo = ['solution', 'cta'].includes(cur.id);
+  mark.style.opacity = solo ? 0 : 1;
+}
+window.seek = seek;
+window.TOTAL = T.total;
+
+/* ---------- preview player ---------- */
+function fit() {
+  const k = Math.min(innerWidth / W, innerHeight / H);
+  const st = document.getElementById('stage');
+  st.style.transform = `scale(${k})`;
+  st.style.left = (innerWidth - W * k) / 2 + 'px';
+}
+if (!location.search.includes('render')) {
+  fit(); addEventListener('resize', fit);
+  const audio = T.audio ? new Audio(T.audio) : null;
+  let t0 = null;
+  const clock = document.getElementById('clock');
+  const loop = now => {
+    const t = audio && !audio.paused ? audio.currentTime : (now - t0) / 1000;
+    seek(Math.min(t, T.total)); clock.textContent = t.toFixed(1) + ' / ' + T.total.toFixed(1) + 's';
+    if (t < T.total) requestAnimationFrame(loop);
+  };
+  document.getElementById('play').onclick = () => { t0 = performance.now(); if (audio) { audio.currentTime = 0; audio.play(); } requestAnimationFrame(loop); };
+  seek(0);
+} else {
+  document.body.classList.add('render');
+}
+window.READY = true;
+})();
+</script>
+</body>
+</html>

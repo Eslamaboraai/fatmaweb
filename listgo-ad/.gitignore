@@ -1,0 +1,4 @@
+audio/
+frames/
+*.env
+render.log
