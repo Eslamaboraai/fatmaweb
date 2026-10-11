@@ -255,6 +255,28 @@ function pictureIcon(x, y, w, h, fill = C.tealL) {
     <path d="M${x + w * .1},${y + h * .85} L${x + w * .38},${y + h * .45} L${x + w * .58},${y + h * .7} L${x + w * .7},${y + h * .58} L${x + w * .9},${y + h * .85} Z" fill="${C.teal}" stroke-width="3"/>`;
 }
 
+/* product art for a mobile-accessories shop: screen protector, charger cable, power bank */
+function product(kind, x, y, w, h, fill = C.tealL) {
+  const X = f => x + w * f, Y = f => y + h * f, sw = Math.max(3, w / 30);
+  const bg = `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="12" fill="${fill}" stroke-width="4"/>`;
+  if (kind === 'screen') return bg +
+    `<rect x="${X(.28)}" y="${Y(.1)}" width="${w * .36}" height="${h * .8}" rx="${w * .05}" fill="${C.ink}" stroke-width="${sw}"/>
+     <rect x="${X(.38)}" y="${Y(.06)}" width="${w * .36}" height="${h * .8}" rx="${w * .05}" fill="#CFEFF7" fill-opacity=".85" stroke="${C.teal}" stroke-width="${sw}"/>
+     <path d="M${X(.45)},${Y(.36)} L${X(.6)},${Y(.18)} M${X(.47)},${Y(.52)} L${X(.68)},${Y(.27)}" stroke="#fff" stroke-width="${sw * 1.6}"/>`;
+  if (kind === 'cable') return bg +
+    `<path d="M${X(.2)},${Y(.7)} C${X(.2)},${Y(.15)} ${X(.75)},${Y(.95)} ${X(.72)},${Y(.32)}" stroke-width="${sw * 1.4}"/>
+     <rect x="${X(.13)}" y="${Y(.66)}" width="${w * .14}" height="${h * .24}" rx="4" fill="#fff" stroke-width="${sw}"/>
+     <rect x="${X(.16)}" y="${Y(.86)}" width="${w * .08}" height="${h * .08}" fill="${C.gray}" stroke-width="${sw * .7}"/>
+     <rect x="${X(.65)}" y="${Y(.1)}" width="${w * .14}" height="${h * .24}" rx="4" fill="#fff" stroke-width="${sw}"/>
+     <rect x="${X(.68)}" y="${Y(.04)}" width="${w * .08}" height="${h * .08}" fill="${C.gray}" stroke-width="${sw * .7}"/>`;
+  return bg +
+    `<rect x="${X(.14)}" y="${Y(.26)}" width="${w * .64}" height="${h * .48}" rx="${w * .07}" fill="#fff" stroke-width="${sw}"/>
+     <rect x="${X(.78)}" y="${Y(.4)}" width="${w * .06}" height="${h * .2}" rx="3" fill="${C.ink}" stroke-width="${sw * .7}"/>
+     <rect x="${X(.2)}" y="${Y(.35)}" width="${w * .12}" height="${h * .3}" fill="${C.green}" stroke-width="${sw * .7}"/>
+     <rect x="${X(.35)}" y="${Y(.35)}" width="${w * .12}" height="${h * .3}" fill="${C.green}" stroke-width="${sw * .7}"/>
+     <path d="M${X(.6)},${Y(.3)} L${X(.52)},${Y(.52)} L${X(.6)},${Y(.52)} L${X(.55)},${Y(.7)} L${X(.7)},${Y(.45)} L${X(.62)},${Y(.45)} Z" fill="${C.amber}" stroke-width="${sw * .7}"/>`;
+}
+
 function heart(x, y, k = 1, fill = C.red) {
   return `<path transform="translate(${x} ${y}) scale(${k})" d="M0,12 C-10,-2 -26,4 -22,18 C-18,30 0,40 0,40 C0,40 18,30 22,18 C26,4 10,-2 0,12 Z" fill="${fill}" stroke-width="4"/>`;
 }
@@ -264,7 +286,7 @@ const BUILD = {
   hook(s) {
     s.write('زباينك مش بيبطّلوا أسئلة!', 540, 270, { size: 74 });
     s.draw(merchant({ mood: 'worried', pose: 'phone' }), { attrs: { transform: 'translate(330 1270) scale(1.15)' }, dur: 2 });
-    const qs = [['بكام ده؟', 770, 470], ['لسه موجود؟', 800, 640], ['فيه مقاس تاني؟', 730, 810], ['بكام؟؟', 840, 980], ['ردّ يا معلّم!', 760, 1140]];
+    const qs = [['بكام ده؟', 770, 470], ['لسه موجود؟', 800, 640], ['عليها ضمان؟', 740, 810], ['بكام؟؟', 840, 980], ['ردّ يا معلّم!', 760, 1140]];
     qs.forEach(([q, x, y], i) => s.pop(bubble(s, x, y, q, { fill: i % 2 ? C.greenL : '#fff', size: 42 }), { dur: .4, advance: .75 }));
     const badge = s.pop(`<circle cx="500" cy="850" r="40" fill="${C.red}" stroke-width="5"/>` + s.text('+99', 500, 864, { size: 34, color: '#fff', dir: 'ltr' }));
     s.draw(`<path d="M530,905 Q548,925 530,945 M552,895 Q578,925 552,958 M418,905 Q400,925 418,945"/>`, { dur: .3 });
@@ -277,7 +299,7 @@ const BUILD = {
            s.text('زبون', 340, 520, { color: '#fff', size: 34 }), { dur: .9 });
     [585, 745, 905].forEach((y, i) => s.pop(
       `<rect x="250" y="${y}" width="256" height="140" rx="18" fill="${C.greenL}" stroke-width="4"/>` +
-      pictureIcon(300, y + 14, 120, 90) + s.text(['250 ج', '450 ج', '690 ج'][i], 460, y + 126, { size: 26 }), { dur: .4, advance: .9 }));
+      product(['screen', 'cable', 'battery'][i], 300, y + 14, 120, 90) + s.text(['75 ج', '120 ج', '650 ج'][i], 460, y + 126, { size: 26 }), { dur: .4, advance: .9 }));
     s.pop(bubble(s, 290, 1088, 'وده بكام؟', { size: 30, tail: 'right' }), { dur: .35 });
     const clock = s.draw(`<circle cx="820" cy="600" r="120" fill="#fff"/><circle cx="820" cy="600" r="8" fill="${C.ink}"/>
       <path d="M820,495 V510 M820,690 V705 M715,600 H730 M910,600 H925"/>
@@ -287,9 +309,9 @@ const BUILD = {
       clock.querySelector('.hh').setAttribute('transform', `rotate(${lt * 22} 820 600)`);
     }, false);
     s.draw(`<path d="M700,905 H890 Q910,905 910,925 V1005 Q910,1025 890,1025 H700 L645,965 Z" fill="${C.amberL}"/>
-            <circle cx="680" cy="965" r="11"/>` + s.text('150 ج', 795, 985, { size: 50 }), { dur: .8 });
+            <circle cx="680" cy="965" r="11"/>` + s.text('120 ج', 795, 985, { size: 50 }), { dur: .8 });
     s.draw(`<path d="M715,1000 L885,930" stroke="${C.red}" stroke-width="12"/>`, { dur: .3 });
-    s.write('175 ج', 800, 1120, { size: 68, color: C.red, font: 'Marhey' });
+    s.write('135 ج', 800, 1120, { size: 68, color: C.red, font: 'Marhey' });
     s.write('ولو السعر اتغيّر؟ تعيد من الأول!', 540, 1370, { size: 60, color: C.red });
   },
 
@@ -309,10 +331,10 @@ const BUILD = {
     s.write('ضيف منتجاتك في دقايق', 540, 260, { size: 80 });
     s.draw(phone(290, 360, 500, 830) + `<rect x="304" y="420" width="472" height="92" fill="${C.teal}" stroke-width="3"/>` +
            s.text('محلّك', 540, 480, { color: '#fff', size: 42 }), { dur: 1 });
-    [['تيشيرت قطن', '250 ج.م'], ['بنطلون جينز', '450 ج.م'], ['كوتشي رياضي', '690 ج.م'], ['شنطة جلد', '380 ج.م']].forEach(([n, p], i) => {
+    [['اسكرينة 9D', '75 ج.م', 'screen'], ['كابل شاحن Type-C', '120 ج.م', 'cable'], ['بطارية 10000 مللي', '650 ج.م', 'battery'], ['كابل آيفون سريع', '150 ج.م', 'cable']].forEach(([n, p, kind], i) => {
       const y = 532 + i * 138;
-      s.pop(`<rect x="322" y="${y}" width="436" height="122" rx="16" fill="#fff" stroke-width="4"/>` + pictureIcon(638, y + 16, 104, 90) +
-            s.text(n, 618, y + 54, { size: 36, anchor: 'start' }) + s.text(p, 618, y + 100, { size: 32, color: C.teal, anchor: 'start' }), { dur: .4, advance: .85 });
+      s.pop(`<rect x="322" y="${y}" width="436" height="122" rx="16" fill="#fff" stroke-width="4"/>` + product(kind, 638, y + 16, 104, 90) +
+            s.text(n, 618, y + 54, { size: 32, anchor: 'start' }) + s.text(p, 618, y + 100, { size: 32, color: C.teal, anchor: 'start' }), { dur: .4, advance: .85 });
     });
     s.pop(`<circle cx="740" cy="1110" r="38" fill="${C.amber}" stroke-width="5"/><path d="M740,1092 V1128 M722,1110 H758" stroke-width="7"/>`, { dur: .35 });
     s.draw(`<rect x="170" y="1250" width="740" height="104" rx="52" fill="#fff" stroke="${C.teal}" stroke-width="7"/>
@@ -340,10 +362,10 @@ const BUILD = {
             <rect x="160" y="940" width="760" height="92" rx="46" fill="${C.grayL}" stroke-width="4"/>
             <circle cx="864" cy="982" r="20" stroke-width="6"/><path d="M850,996 L834,1012" stroke-width="7"/>`, { dur: .8 });
     const typed = E('text', { x: 815, y: 1000, 'font-size': 42, 'font-family': 'IBM Plex Sans Arabic', 'font-weight': 700, fill: C.ink, 'text-anchor': 'start' }, s.layer);
-    const word = 'جينز';
+    const word = 'كابل';
     s.anim(null, .8, p => { const n = Math.round(p * word.length); typed.textContent = word.slice(0, n) + (p < 1 && n < word.length ? '|' : ''); });
-    s.pop(`<rect x="160" y="1056" width="760" height="118" rx="18" fill="${C.amberL}" stroke-width="4"/>` + pictureIcon(790, 1070, 110, 90) +
-          s.text('بنطلون جينز', 770, 1108, { size: 38, anchor: 'start' }) + s.text('450 ج.م', 770, 1152, { size: 32, color: C.teal, anchor: 'start' }), { dur: .4 });
+    s.pop(`<rect x="160" y="1056" width="760" height="118" rx="18" fill="${C.amberL}" stroke-width="4"/>` + product('cable', 790, 1070, 110, 90) +
+          s.text('كابل شاحن Type-C', 770, 1108, { size: 38, anchor: 'start' }) + s.text('120 ج.م', 770, 1152, { size: 32, color: C.teal, anchor: 'start' }), { dur: .4 });
     const modes = s.pop(`
       <g><rect x="345" y="1205" width="90" height="90" rx="18" fill="#fff" stroke-width="4"/><rect x="365" y="1225" width="22" height="22" fill="${C.teal}" stroke="none"/><rect x="393" y="1225" width="22" height="22" fill="${C.teal}" stroke="none"/><rect x="365" y="1253" width="22" height="22" fill="${C.teal}" stroke="none"/><rect x="393" y="1253" width="22" height="22" fill="${C.teal}" stroke="none"/></g>
       <g><rect x="495" y="1205" width="90" height="90" rx="18" fill="#fff" stroke-width="4"/><rect x="513" y="1225" width="18" height="18" fill="${C.teal}" stroke="none"/><path d="M539,1234 H568 M539,1266 H568" stroke-width="6"/><rect x="513" y="1257" width="18" height="18" fill="${C.teal}" stroke="none"/></g>
@@ -353,8 +375,8 @@ const BUILD = {
 
   order(s) {
     s.write('عايز يطلب؟', 540, 250, { size: 92 });
-    s.draw(phone(80, 360, 420, 800) + pictureIcon(126, 440, 328, 270) +
-           s.text('بنطلون جينز', 290, 780, { size: 40 }) + s.text('450 ج.م', 290, 836, { size: 36, color: C.teal }), { dur: 1.1 });
+    s.draw(phone(80, 360, 420, 800) + product('battery', 126, 440, 328, 270) +
+           s.text('بطارية 10000 مللي', 290, 780, { size: 38 }) + s.text('650 ج.م', 290, 836, { size: 36, color: C.teal }), { dur: 1.1 });
     s.draw(merchant({ mood: 'happy', pose: 'phone' }), { attrs: { transform: 'translate(810 1260) scale(.95)' }, dur: 1.3 });
     const btn = s.pop(`<rect x="120" y="900" width="340" height="104" rx="52" fill="${C.green}" stroke-width="5"/>
       <circle cx="420" cy="952" r="24" fill="#fff" stroke="#fff" stroke-width="2"/><path d="M410,942 Q408,960 430,963" stroke="${C.green}" stroke-width="7"/>` +
@@ -373,7 +395,7 @@ const BUILD = {
       btn.style.filter = p > .5 && p < .75 ? 'brightness(1.15)' : '';
     });
     s.draw(`<path d="M330,890 Q520,560 760,480" stroke="${C.green}" stroke-width="6" stroke-dasharray="4 18"/>`, { dur: .6 });
-    s.pop(bubble(s, 800, 470, 'عايز واحد مقاس 32', { fill: C.greenL, size: 38, tail: 'left' }), { dur: .45 });
+    s.pop(bubble(s, 800, 470, 'عايز بطارية واسكرينة', { fill: C.greenL, size: 38, tail: 'left' }), { dur: .45 });
     s.pop(`<path d="M960,640 l10,-28 l10,28 l28,10 l-28,10 l-10,28 l-10,-28 l-28,-10 Z" fill="${C.amber}" stroke-width="4"/>
            <path d="M650,700 l7,-20 l7,20 l20,7 l-20,7 l-7,20 l-7,-20 l-20,-7 Z" fill="${C.amber}" stroke-width="4"/>`, { dur: .4 });
     s.write('والطلب يوصلك على طول!', 540, 1385, { size: 66, color: C.teal });
