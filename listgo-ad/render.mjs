@@ -1,5 +1,5 @@
-// Renders animation.html frame by frame and encodes the MP4 with the voiceover.
-// Usage: node render.mjs [out.mp4] [--fps 30] [--from 0 --to 10] [--still 12.5 still.png]
+// Renders an ad page (animation.html by default) frame by frame and encodes the MP4 with its voiceover.
+// Usage: node render.mjs [out.mp4] [--page skit.html] [--fps 30] [--from 0 --to 10] [--still 12.5 still.png]
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import http from 'node:http';
@@ -13,7 +13,7 @@ try { ({ chromium } = require('playwright')); } catch { ({ chromium } = require(
 const here = path.dirname(new URL(import.meta.url).pathname);
 const args = process.argv.slice(2);
 const opt = (name, def) => { const i = args.indexOf(name); return i < 0 ? def : args[i + 1]; };
-const out = args[0] && !args[0].startsWith('--') ? args[0] : path.join(here, 'out', 'listgo-ad.mp4');
+const out = args[0] && !args[0].startsWith('--') && !args[0].endsWith('.html') ? args[0] : path.join(here, 'out', 'listgo-ad.mp4');
 const fps = +opt('--fps', 30);
 
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.woff2': 'font/woff2', '.wav': 'audio/wav' };
@@ -28,7 +28,7 @@ await new Promise(r => server.once('listening', r));
 const browser = await chromium.launch(fs.existsSync('/opt/pw-browsers/chromium') ? {} : {});
 const page = await browser.newPage({ viewport: { width: 1080, height: 1920 }, deviceScaleFactor: 1 });
 page.on('pageerror', e => { console.error('page error:', e.message); process.exitCode = 1; });
-await page.goto(`http://127.0.0.1:${server.address().port}/animation.html?render`);
+await page.goto(`http://127.0.0.1:${server.address().port}/${opt('--page', 'animation.html')}?render`);
 await page.waitForFunction(() => window.READY === true, null, { timeout: 30000 });
 const { total, audio } = await page.evaluate(() => ({ total: window.TOTAL, audio: window.TIMINGS.audio }));
 

@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ListGo Skit Ad</title>
+<link rel="stylesheet" href="assets/fonts.css">
+<style>
+  html, body { margin: 0; background: #1d1f24; overflow: hidden; }
+  body.render { background: #fdfdfb; }
+  #stage { position: absolute; top: 0; left: 0; width: 1080px; height: 1920px; overflow: hidden; background: #fdfdfb; transform-origin: 0 0; }
+  #board { position: absolute; inset: 0; }
+  #board text { stroke: none; }
+  #cap { position: absolute; left: 60px; right: 60px; top: 1600px; display: flex; flex-direction: column; align-items: center; pointer-events: none; }
+  #cap b { font: 700 30px/1 'IBM Plex Sans Arabic', sans-serif; color: #fff; padding: 10px 22px 12px; border-radius: 18px 18px 0 0; }
+  #cap span { font: 600 42px/1.5 'IBM Plex Sans Arabic', sans-serif; color: #fff; background: rgba(35, 39, 47, .92);
+              padding: 14px 32px 18px; border-radius: 28px; text-align: center; max-width: 900px; border-top: 6px solid; }
+  #controls { position: fixed; bottom: 12px; left: 12px; color: #ddd; font: 14px sans-serif; direction: ltr; }
+  body.render #controls { display: none; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <svg id="board" width="1080" height="1920" viewBox="0 0 1080 1920" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <clipPath id="clipTop"><rect width="1080" height="915"/></clipPath>
+      <clipPath id="clipBottom"><rect y="915" width="1080" height="1005"/></clipPath>
+      <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+        <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#000" flood-opacity=".28"/>
+      </filter>
+    </defs>
+    <g id="world" stroke="#23272F" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"></g>
+  </svg>
+  <div id="cap"><b></b><span></span></div>
+</div>
+<div id="controls"><button id="play">▶ play</button> <span id="clock"></span></div>
+<script src="skit-timings.js"></script>
+<script src="common.js"></script>
+<script>
+const T = window.TIMINGS, FPS = 30;
+const L = Object.fromEntries(T.scenes.map(s => [s.id, s]));
+const S = id => L[id].start + L[id].lead;                 // when a line starts being spoken
+const F = (id, f) => S(id) + L[id].speech * f;            // a fraction of the way through a line
+const END = id => S(id) + L[id].speech;
+const WHO = { customer: { label: 'الزبون', color: '#E0674F' }, merchant: { label: 'المعلّم', color: C.teal } };
+const acts = [];                                          // per-frame updaters: fn(t)
+const on = fn => acts.push(fn);
+const world = document.getElementById('world');
+
+/* ---------- small animation helpers ---------- */
+function popAt(el, t0, { dur = .4, origin, until, out = .25 } = {}) {
+  const bb = el.getBBox(), [cx, cy] = origin || [bb.x + bb.width / 2, bb.y + bb.height / 2];
+  on(t => {
+    const p = clamp((t - t0) / dur), q = until ? clamp((t - until) / out) : 0;
+    const k = p <= 0 || q >= 1 ? 0.001 : ease.back(p) * (1 - ease.inOut(q));
+    el.style.visibility = p > 0 && q < 1 ? 'visible' : 'hidden';
+    el.setAttribute('transform', `translate(${cx} ${cy}) scale(${k}) translate(${-cx} ${-cy})`);
+  });
+  return el;
+}
+function fadeAt(el, t0, { dur = .3, until, out = .3 } = {}) {
+  on(t => {
+    const o = clamp((t - t0) / dur) * (until ? 1 - clamp((t - until) / out) : 1);
+    el.style.opacity = o; el.style.visibility = o > 0 ? 'visible' : 'hidden';
+  });
+  return el;
+}
+const keyed = (frames, t) => frames.reduce((v, [at, val]) => t >= at ? val : v, frames[0][1]);
+
+/* ---------- characters with a talking mouth ---------- */
+const BROWS = {
+  neutral: 'M-46,-32 L-16,-35 M46,-32 L16,-35', annoyed: 'M-46,-38 L-14,-28 M46,-38 L14,-28',
+  shocked: 'M-48,-48 Q-32,-62 -14,-50 M48,-48 Q32,-62 14,-50', worried: 'M-46,-30 L-14,-44 M46,-30 L14,-44',
+  happy: 'M-46,-38 Q-30,-48 -14,-40 M46,-38 Q30,-48 14,-40',
+};
+const MOUTH = { neutral: 'M-20,54 Q0,66 20,54', annoyed: 'M-18,58 L18,58', shocked: 'M-14,56 Q0,48 14,56',
+                worried: 'M-20,62 Q0,50 20,62', happy: 'M-28,48 Q0,82 28,48 Z' };
+
+function person(x, y, k, o) {
+  const g = E('g', { transform: `translate(${x} ${y}) scale(${k})` }, o.parent);
+  const body = E('g', {}, g);
+  const arm = (d, color) => `<path d="${d}" stroke-width="44"/><path d="${d}" stroke="${color}" stroke-width="34"/>`;
+  const hair = o.hair === 'curly'
+    ? Array.from({ length: 9 }, (_, i) => { const a = Math.PI * (1.05 + i * .113); return `<circle cx="${Math.cos(a) * 76}" cy="${Math.sin(a) * 76 - 4}" r="30" fill="${o.hairColor}"/>`; }).join('')
+    : `<path d="M-80,-12 Q-86,-92 -16,-96 Q56,-100 82,-20 Q60,-56 18,-50 Q-30,-62 -80,-12 Z" fill="${o.hairColor}"/>`;
+  body.innerHTML = `
+    ${arm('M-112,128 Q-160,220 -140,320', o.shirt)}
+    <path d="M-128,340 L-122,170 Q-118,112 -60,100 L60,100 Q118,112 122,170 L128,340 Z" fill="${o.shirt}"/>
+    ${o.apron ? `<path d="M-70,116 L70,116 L86,340 L-86,340 Z" fill="${C.teal}"/><rect x="-42" y="210" width="84" height="52" rx="8" stroke="#fff" stroke-width="4"/>` : ''}
+    ${o.hoodie ? `<path d="M-60,104 Q0,150 60,104" stroke-width="6"/><path d="M-22,128 V190 M22,128 V190" stroke="#fff" stroke-width="6"/>` : ''}
+    <rect x="-22" y="62" width="44" height="46" fill="${o.skin}"/>
+    <circle cx="-80" cy="8" r="18" fill="${o.skin}"/><circle cx="80" cy="8" r="18" fill="${o.skin}"/>
+    <circle cx="0" cy="0" r="82" fill="${o.skin}"/>
+    ${hair}
+    <circle cx="-48" cy="30" r="12" fill="#F2A08A" stroke="none" opacity=".5"/><circle cx="48" cy="30" r="12" fill="#F2A08A" stroke="none" opacity=".5"/>
+    <g class="eyes"><ellipse cx="-30" cy="-4" rx="9" ry="12" fill="${C.ink}" stroke="none"/><ellipse cx="30" cy="-4" rx="9" ry="12" fill="${C.ink}" stroke="none"/></g>
+    <path class="happyEyes" d="M-44,-2 Q-30,-18 -16,-2 M16,-2 Q30,-18 44,-2" stroke-width="7"/>
+    <path class="brows" stroke-width="7"/>
+    <path d="M0,2 Q-9,24 6,26"/>
+    ${o.mustache ? `<path d="M-42,38 Q-20,22 0,34 Q20,22 42,38 Q20,48 0,43 Q-20,48 -42,38 Z" fill="${C.ink}" stroke-width="3"/>` : ''}
+    <path class="mouthC" fill="none"/>
+    <ellipse class="mouthO" cx="0" cy="58" rx="20" ry="10" fill="#7B2D2D" stroke-width="4"/>
+    <path class="sweat" d="M98,-74 Q84,-46 98,-34 Q112,-46 98,-74 Z" fill="#A9DBF5" stroke-width="4"/>
+    <g class="armPhone">
+      <rect x="112" y="-46" width="66" height="126" rx="13" fill="${C.ink}"/><circle cx="160" cy="-28" r="6" fill="#555" stroke="none"/>
+      ${arm('M112,128 Q190,170 150,78', o.shirt)}<circle cx="148" cy="66" r="25" fill="${o.skin}"/>
+    </g>
+    <g class="armThumb">
+      ${arm('M112,128 Q196,96 182,14', o.shirt)}<circle cx="182" cy="2" r="28" fill="${o.skin}"/>
+      <rect x="171" y="-64" width="24" height="52" rx="12" fill="${o.skin}"/>
+    </g>`;
+  const q = c => body.querySelector('.' + c);
+  return { g, body, x, y, k, eyes: q('eyes'), happyEyes: q('happyEyes'), brows: q('brows'), mouthC: q('mouthC'), mouthO: q('mouthO'),
+           sweat: q('sweat'), armPhone: q('armPhone'), armThumb: q('armThumb'), phone: [x + 145 * k, y + 17 * k], blinkOffset: o.blinkOffset || 0 };
+}
+
+function speakerAt(t) {
+  const sc = T.scenes.find(s => t >= s.start + s.lead && t <= s.start + s.lead + s.speech);
+  return sc ? sc.who : null;
+}
+const envAt = t => (T.env || [])[Math.floor(t * FPS)] || 0;
+
+function animatePerson(p, who, moods, t, pose = 'phone') {
+  const mood = keyed(moods, t);
+  const talking = speakerAt(t) === who, e = talking ? envAt(t) : 0;
+  p.brows.setAttribute('d', BROWS[mood]);
+  p.mouthC.setAttribute('d', MOUTH[mood]);
+  p.mouthC.setAttribute('fill', mood === 'happy' ? '#fff' : 'none');
+  const open = e > .07;
+  p.mouthC.style.visibility = open ? 'hidden' : 'visible';
+  p.mouthO.style.visibility = open ? 'visible' : 'hidden';
+  p.mouthO.setAttribute('ry', 5 + e * 20); p.mouthO.setAttribute('rx', 16 + e * 8);
+  const blink = ((t + p.blinkOffset) % 3.3) < .13;
+  const wide = mood === 'shocked' ? 1.4 : 1;
+  const happyEyes = mood === 'happy' && !talking;
+  p.eyes.style.visibility = happyEyes ? 'hidden' : 'visible';
+  p.happyEyes.style.visibility = happyEyes ? 'visible' : 'hidden';
+  p.eyes.setAttribute('transform', `translate(0 -4) scale(${wide} ${blink ? .12 : wide}) translate(0 4)`);
+  p.sweat.style.visibility = mood === 'worried' ? 'visible' : 'hidden';
+  p.armPhone.style.visibility = pose === 'phone' ? 'visible' : 'hidden';
+  p.armThumb.style.visibility = pose === 'thumb' ? 'visible' : 'hidden';
+  const bob = Math.sin(t * 2.1 + p.blinkOffset) * 2 - e * 7;
+  p.body.setAttribute('transform', `translate(0 ${bob}) rotate(${talking ? Math.sin(t * 5) * 1.6 : 0})`);
+}
+
+/* ---------- voice-note bubbles (WhatsApp style) ---------- */
+function voiceNote(parent, cx, cy, who, chip) {
+  const g = E('g', {}, parent), w = 400, h = 104, x = cx - w / 2, y = cy - h / 2;
+  const fill = who === 'customer' ? '#fff' : C.greenL, accent = who === 'customer' ? '#E0674F' : C.teal;
+  g.innerHTML = `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="30" fill="${fill}" stroke-width="5"/>
+    <circle cx="${x + 46}" cy="${cy}" r="26" fill="${accent}" stroke="none"/><path d="M${x + 38},${cy - 13} L${x + 58},${cy} L${x + 38},${cy + 13} Z" fill="#fff" stroke="none"/>`;
+  const bars = [];
+  for (let i = 0; i < 16; i++) {
+    const hh = 10 + Math.abs(Math.sin(i * 1.7 + cx)) * 36;
+    bars.push(E('rect', { x: x + 86 + i * 12, y: cy - hh / 2, width: 7, height: hh, rx: 3.5, fill: C.gray, stroke: 'none' }, g));
+  }
+  const chipX = x + 292;
+  if (chip?.product) g.insertAdjacentHTML('beforeend', product(chip.product, chipX, y + 10, 96, 84));
+  if (chip?.price) g.insertAdjacentHTML('beforeend', `<text x="${chipX + 50}" y="${cy + 16}" font-size="44" font-family="Marhey" font-weight="700" fill="${C.teal}" text-anchor="middle">${chip.price}</text>`);
+  if (chip?.text) g.insertAdjacentHTML('beforeend', `<text x="${chipX + 50}" y="${cy + 18}" font-size="52" font-family="Marhey" font-weight="700" fill="${C.red}" text-anchor="middle">${chip.text}</text>`);
+  if (chip?.photos) g.insertAdjacentHTML('beforeend', `<g transform="rotate(-8 ${chipX + 48} ${cy})">${pictureIcon(chipX + 6, y + 18, 80, 64, '#fff')}</g>${pictureIcon(chipX + 16, y + 24, 80, 64)}`);
+  return { g, bars, accent };
+}
+
+function bubbleStack(parent, cx, baseY, who, items, hideAt) {
+  const notes = items.map(([id, chip]) => ({ id, ...voiceNote(parent, cx, baseY, who, chip) }));
+  on(t => {
+    notes.forEach((n, i) => {
+      const s0 = S(n.id);
+      const kf = notes.slice(i + 1).reduce((a, m) => a + ease.inOut(clamp((t - S(m.id)) / .3)), 0);
+      const pIn = clamp((t - s0 + .15) / .35), gone = clamp((t - hideAt) / .3);
+      const k = pIn <= 0 ? .001 : ease.back(pIn);
+      const o = clamp(1 - kf * .45) * (1 - gone);
+      n.g.style.visibility = pIn > 0 && o > .02 && kf < 2 ? 'visible' : 'hidden';
+      n.g.style.opacity = o;
+      n.g.setAttribute('transform', `translate(0 ${-kf * 124}) translate(${cx} ${baseY}) scale(${k}) translate(${-cx} ${-baseY})`);
+      const prog = clamp((t - s0) / L[n.id].speech);
+      n.bars.forEach((b, j) => b.setAttribute('fill', j / n.bars.length < prog ? n.accent : C.gray));
+    });
+  });
+}
+
+/* ---------- build the whole film ---------- */
+function build() {
+  const top = E('g', { 'clip-path': 'url(#clipTop)' }, world);
+  const bottom = E('g', { 'clip-path': 'url(#clipBottom)' }, world);
+  const topIn = E('g', {}, top), botIn = E('g', {}, bottom);
+
+  // customer's living room
+  topIn.innerHTML = `
+    <rect width="1080" height="915" fill="#FBE7D3" stroke="none"/>
+    <rect y="770" width="1080" height="145" fill="#E7C29C" stroke="none"/>
+    <rect x="60" y="150" width="230" height="300" rx="10" fill="#BFE6F5"/><path d="M175,150 V450 M60,300 H290" stroke-width="6"/>
+    <path d="M44,140 Q100,300 70,470 L44,470 Z M306,140 Q250,300 280,470 L306,470 Z" fill="${C.amber}"/>
+    <path d="M30,135 H320" stroke-width="10"/>
+    <rect x="200" y="470" width="660" height="240" rx="50" fill="#2F8F9D"/>`;
+  const customer = person(520, 430, 1, { parent: topIn, skin: '#E9B48C', hair: 'curly', hairColor: '#3A2A20', shirt: '#E0674F', hoodie: true, blinkOffset: 1.3 });
+  topIn.insertAdjacentHTML('beforeend', `
+    <rect x="170" y="680" width="720" height="120" rx="30" fill="#267C89"/>
+    <rect x="160" y="560" width="90" height="250" rx="40" fill="#2F8F9D"/><rect x="810" y="560" width="90" height="250" rx="40" fill="#2F8F9D"/>
+    <rect x="955" y="700" width="80" height="90" rx="10" fill="${C.amber}"/>
+    <path d="M995,700 Q960,600 925,590 M995,700 Q1000,590 1010,560 M995,700 Q1030,620 1060,610" stroke="#3E8E4F" stroke-width="10"/>`);
+
+  // merchant's shop
+  botIn.innerHTML = `
+    <rect y="915" width="1080" height="1005" fill="#E3F0F1" stroke="none"/>
+    <rect x="40" y="955" width="300" height="70" rx="14" fill="${C.ink}"/>
+    <text x="190" y="1003" font-size="36" font-family="Marhey" font-weight="700" fill="#fff" text-anchor="middle">إكسسوارات موبايل</text>
+    <rect x="40" y="1045" width="300" height="350" rx="12" fill="#F6E7C8"/>
+    ${[0, 1, 2].map(r => [0, 1].map(c => `<line x1="${100 + c * 140}" y1="${1075 + r * 110}" x2="${100 + c * 140}" y2="${1090 + r * 110}" stroke-width="6"/>` +
+        product(['cable', 'screen', 'battery'][(r + c) % 3], 60 + c * 140, 1090 + r * 110, 100, 86, '#fff')).join('')).join('')}
+    <path d="M760,1230 H1060 M760,1340 H1060" stroke-width="8"/>
+    ${product('battery', 770, 1150, 90, 76, '#fff')}${product('screen', 870, 1150, 90, 76, '#fff')}${product('cable', 970, 1150, 80, 76, '#fff')}
+    ${product('cable', 780, 1260, 90, 76, '#fff')}${product('battery', 880, 1260, 90, 76, '#fff')}`;
+  const merchant = person(420, 1215, 1.25, { parent: botIn, skin: '#F3C9A2', hair: 'short', hairColor: C.ink, shirt: C.amberL, apron: true, mustache: true, blinkOffset: 0 });
+  botIn.insertAdjacentHTML('beforeend', `
+    <rect x="-10" y="1500" width="1100" height="44" fill="#C98B4F"/>
+    <rect x="-10" y="1544" width="1100" height="390" fill="#A86C3B"/>
+    <path d="M360,1544 V1920 M720,1544 V1920" stroke="#8A5530" stroke-width="5"/>`);
+  world.insertAdjacentHTML('beforeend', `<rect y="905" width="1080" height="20" fill="${C.ink}" stroke="none"/>`);
+  const mark = E('image', { href: 'assets/listgo-logo.png', x: 870, y: 40, width: 180, height: 65 }, world);
+
+  // moods per character over time
+  const customerMoods = [[0, 'neutral'], [S('c4'), 'happy'], [END('c4'), 'neutral'], [F('m5', .9), 'shocked'], [F('c5', .55), 'happy']];
+  const merchantMoods = [[0, 'neutral'], [S('m3'), 'annoyed'], [F('c4', .4), 'shocked'], [S('m4'), 'worried'],
+                         [F('m4', .99), 'shocked'], [S('m5'), 'happy']];
+  on(t => {
+    animatePerson(customer, 'customer', customerMoods, t);
+    animatePerson(merchant, 'merchant', merchantMoods, t, t >= S('m8') - .2 ? 'thumb' : 'phone');
+    const shake = t > F('c4', .6) && t < END('m4') ? Math.sin(t * 70) * 7 * (1 - clamp((t - F('c4', .6)) / 2.2)) : 0;
+    botIn.setAttribute('transform', `translate(${shake} 0)`);
+  });
+
+  // voice notes
+  bubbleStack(topIn, 838, 300, 'customer', [['c1', { product: 'screen' }], ['c2', { product: 'cable' }], ['c3', { product: 'battery' }], ['c4', { photos: 1 }]], S('m5'));
+  bubbleStack(botIn, 838, 1090, 'merchant', [['m1', { price: '75 ج' }], ['m2', { price: '120 ج' }], ['m3', { price: '150 ج' }], ['m4', { text: '!!' }]], S('m5'));
+
+  // unread badge on the merchant's phone
+  const [mpx, mpy] = merchant.phone;
+  const badge = E('g', {}, botIn);
+  const badgeTxt = E('text', { x: mpx + 40, y: mpy - 60, 'font-size': 30, 'font-family': 'IBM Plex Sans Arabic', 'font-weight': 700, fill: '#fff', 'text-anchor': 'middle', direction: 'ltr' });
+  badge.appendChild(E('circle', { cx: mpx + 40, cy: mpy - 70, r: 30, fill: C.red, 'stroke-width': 4 })); badge.appendChild(badgeTxt);
+  on(t => {
+    const n = keyed([[0, ''], [S('c1'), '1'], [S('c2'), '2'], [S('c3'), '3'], [S('c4'), '+99']], t);
+    badge.style.visibility = n && t < S('m5') ? 'visible' : 'hidden';
+    badgeTxt.textContent = n;
+    const wob = n === '+99' ? Math.sin(t * 40) * 12 * (1 - clamp((t - S('c4')) / 2)) : 0;
+    badge.setAttribute('transform', `rotate(${wob} ${mpx + 40} ${mpy - 70})`);
+  });
+
+  // photo pile raining onto the counter
+  for (let i = 0; i < 12; i++) {
+    const px = 120 + ((i * 263) % 840), rot = ((i * 47) % 50) - 25, land = 1480 - (i % 3) * 14, t0 = F('c4', .45) + i * .14;
+    const ph = G(`<rect x="-50" y="-42" width="100" height="84" rx="6" fill="#fff" stroke-width="4"/>` + product(['screen', 'cable', 'battery'][i % 3], -40, -34, 80, 60), botIn);
+    on(t => {
+      const p = clamp((t - t0) / .55), gone = clamp((t - S('m5')) / .4);
+      ph.style.visibility = p > 0 && gone < 1 ? 'visible' : 'hidden';
+      ph.style.opacity = 1 - gone;
+      ph.setAttribute('transform', `translate(${px} ${lerp(880, land, ease.out(p))}) rotate(${rot * p})`);
+    });
+  }
+
+  // the idea: a lightbulb over the merchant
+  const bulb = G(`<g transform="translate(-20 0)"><path d="M440,890 C396,890 372,922 372,956 C372,986 394,1004 404,1022 L404,1046 L476,1046 L476,1022 C486,1004 508,986 508,956 C508,922 484,890 440,890 Z" fill="#FFE27A"/>
+    <path d="M410,1060 H470"/><path d="M420,1000 Q430,970 440,1000 Q450,970 460,1000" stroke="${C.amber}"/>
+    <path d="M440,872 V850 M520,905 L538,888 M360,905 L342,888 M530,960 H556 M350,960 H324" stroke="${C.amber}" stroke-width="9"/></g>`, world);
+  popAt(bulb, S('m5') - .25, { until: F('m5', .45), origin: [420, 1000] });
+
+  // the link flies from the merchant's phone to the customer's phone
+  const [cpx, cpy] = customer.phone;
+  const pill = G(`<rect x="-200" y="-40" width="400" height="80" rx="40" fill="#fff" stroke="${C.teal}" stroke-width="6"/>
+    <g transform="rotate(-40 -160 0)"><rect x="-182" y="-12" width="40" height="24" rx="12" stroke="${C.teal}" stroke-width="6"/><rect x="-156" y="-12" width="40" height="24" rx="12" stroke="${C.teal}" stroke-width="6"/></g>
+    <text x="20" y="11" font-size="30" font-family="IBM Plex Sans Arabic" font-weight="700" fill="${C.teal}" text-anchor="middle" direction="ltr">listgo.shop/mahalak</text>`, world, { filter: 'url(#shadow)' });
+  const flyA = F('m5', .3), flyB = F('m5', .95);
+  on(t => {
+    const appear = clamp((t - flyA + .35) / .35), p = ease.inOut(clamp((t - flyA) / (flyB - flyA)));
+    const x = lerp(lerp(mpx, 900, p), lerp(900, cpx, p), p), y = lerp(lerp(mpy - 120, 760, p), lerp(760, cpy, p), p);
+    const k = (p < 1 ? ease.back(appear) : 1 - clamp((t - flyB) / .25)) * lerp(1, .35, p * p);
+    pill.style.visibility = appear > 0 && k > .01 ? 'visible' : 'hidden';
+    pill.setAttribute('transform', `translate(${x} ${y}) scale(${Math.max(k, .001)})`);
+  });
+  const ding = E('circle', { cx: cpx, cy: cpy, r: 0, stroke: C.green, 'stroke-width': 8 }, world);
+  on(t => { const p = clamp((t - flyB) / .5); ding.setAttribute('r', 10 + p * 110); ding.style.opacity = p > 0 && p < 1 ? 1 - p : 0; });
+
+  // the customer's phone opens full screen: the real ListGo list
+  const ov = E('g', {}, world);
+  const dim = E('rect', { width: 1080, height: 1920, fill: 'rgba(35,39,47,.55)', stroke: 'none' }, ov);
+  const big = E('g', { filter: 'url(#shadow)' }, ov);
+  big.innerHTML = phone(220, 300, 640, 1260) + `
+    <rect x="234" y="360" width="612" height="140" fill="${C.teal}" stroke-width="3"/>
+    <text x="540" y="425" font-size="50" font-family="Marhey" font-weight="700" fill="#fff" text-anchor="middle">محلّك</text>
+    <text x="540" y="474" font-size="28" font-family="IBM Plex Sans Arabic" font-weight="600" fill="#D3ECEE" text-anchor="middle" direction="ltr">listgo.shop/mahalak</text>
+    <rect x="258" y="524" width="564" height="84" rx="42" fill="${C.grayL}" stroke-width="4"/>
+    <circle cx="786" cy="562" r="18" stroke-width="6"/><path d="M773,575 L758,590" stroke-width="7"/>`;
+  const typed = E('text', { x: 744, y: 580, 'font-size': 38, 'font-family': 'IBM Plex Sans Arabic', 'font-weight': 700, fill: C.ink, 'text-anchor': 'start' }, big);
+  const ITEMS = [['اسكرينة', '75 ج.م', 'screen'], ['كابل شاحن Type-C', '120 ج.م', 'cable'], ['بطارية 5000 مللي', '150 ج.م', 'battery'], ['كابل آيفون سريع', '150 ج.م', 'cable']];
+  const rows = ITEMS.map(([n, pr, kind], i) => {
+    const r = G(`<rect x="258" y="0" width="564" height="140" rx="20" fill="#fff" stroke-width="4"/>` + product(kind, 692, 16, 110, 108) +
+      `<text x="672" y="62" font-size="38" font-family="IBM Plex Sans Arabic" font-weight="700" fill="${C.ink}" text-anchor="start">${n}</text>
+       <text x="672" y="112" font-size="34" font-family="IBM Plex Sans Arabic" font-weight="700" fill="${C.teal}" text-anchor="start">${pr}</text>`, big);
+    return { r, i, keep: kind === 'battery' };
+  });
+  const wa = G(`<rect x="288" y="0" width="504" height="110" rx="55" fill="${C.green}" stroke-width="5"/>
+    <circle cx="738" cy="55" r="28" fill="#fff" stroke="#fff" stroke-width="2"/><path d="M726,44 Q724,64 748,68" stroke="${C.green}" stroke-width="8"/>
+    <text x="520" y="70" font-size="40" font-family="IBM Plex Sans Arabic" font-weight="700" fill="#fff" text-anchor="middle">اطلب على واتساب</text>`, big);
+  const finger = G(`<g transform="rotate(-24)"><rect x="-23" y="0" width="46" height="160" rx="23" fill="#E9B48C"/>
+    <rect x="-66" y="118" width="150" height="160" rx="60" fill="#E9B48C"/><path d="M-20,160 Q8,170 28,160 M24,182 Q46,190 66,180"/>
+    <rect x="-56" y="268" width="134" height="440" fill="#E0674F"/></g>`, ov);
+  const ripple = E('circle', { r: 0, stroke: '#fff', 'stroke-width': 9 }, ov);
+  const openA = S('c5') - .45, closeA = END('c6') + .45, typeA = F('c5', .55), tapT = F('c6', .55);
+  on(t => {
+    const pin = ease.out(clamp((t - openA) / .5)), pout = ease.inOut(clamp((t - closeA) / .45)), p = pin * (1 - pout);
+    ov.style.visibility = p > .001 ? 'visible' : 'hidden';
+    dim.style.opacity = p;
+    const k = lerp(.1, 1, p), x = lerp(cpx, 540, p), y = lerp(cpy, 930, p);
+    big.setAttribute('transform', `translate(${x} ${y}) scale(${k}) translate(-540 -930)`);
+    const word = 'بطارية', n = Math.round(clamp((t - typeA) / .7) * word.length);
+    typed.textContent = word.slice(0, n) + (n > 0 && n < word.length ? '|' : '');
+    const filt = ease.inOut(clamp((t - typeA - .75) / .4));
+    rows.forEach(({ r, i, keep }) => {
+      const show = clamp((t - openA - .3 - i * .18) / .3);
+      const yy = lerp(632 + i * 156, keep ? 632 : 632 + i * 156, filt);
+      const o = show * (keep ? 1 : 1 - filt);
+      r.style.opacity = o; r.style.visibility = o > .01 ? 'visible' : 'hidden';
+      r.setAttribute('transform', `translate(0 ${yy})`);
+    });
+    const wIn = clamp((t - S('c6') + .1) / .35);
+    wa.style.visibility = wIn > 0 ? 'visible' : 'hidden';
+    const press = t > tapT && t < tapT + .18 ? .94 : 1;
+    wa.setAttribute('transform', `translate(540 845) scale(${(wIn > 0 ? ease.back(wIn) : .001) * press}) translate(-540 -55) translate(0 0)`);
+    // finger taps the WhatsApp button (button centre ≈ 540,900 on screen)
+    const fin = clamp((t - tapT + .55) / .55), fout = clamp((t - tapT - .25) / .4);
+    finger.style.visibility = fin > 0 && fout < 1 && p > .5 ? 'visible' : 'hidden';
+    finger.setAttribute('transform', `translate(${lerp(lerp(820, 560, ease.out(fin)), 820, ease.inOut(fout))} ${lerp(lerp(1950, 905, ease.out(fin)), 1950, ease.inOut(fout))})`);
+    const rp = clamp((t - tapT) / .5);
+    ripple.setAttribute('cx', 540); ripple.setAttribute('cy', 900);
+    ripple.setAttribute('r', 20 + rp * 180); ripple.style.opacity = rp > 0 && rp < 1 ? 1 - rp : 0;
+  });
+
+  // the order lands on the merchant's phone
+  const env = G(`<rect x="-46" y="-32" width="92" height="64" rx="12" fill="${C.green}" stroke-width="5"/><path d="M-46,-26 L0,8 L46,-26" stroke="#fff" stroke-width="6"/>`, world, { filter: 'url(#shadow)' });
+  const sendA = closeA + .2, sendB = S('m6') - .05;
+  on(t => {
+    const p = ease.inOut(clamp((t - sendA) / (sendB - sendA)));
+    env.style.visibility = t > sendA && t < sendB + .05 ? 'visible' : 'hidden';
+    env.setAttribute('transform', `translate(${lerp(lerp(cpx, 980, p), lerp(980, mpx, p), p)} ${lerp(lerp(cpy, 900, p), lerp(900, mpy, p), p)}) rotate(${p * 360})`);
+  });
+  const order = G(`<rect x="620" y="975" width="430" height="200" rx="26" fill="#fff" stroke-width="5"/>
+    <path d="M620,1001 Q620,975 646,975 H1024 Q1050,975 1050,1001 V1035 H620 Z" fill="${C.green}" stroke-width="5"/>
+    <text x="835" y="1018" font-size="32" font-family="IBM Plex Sans Arabic" font-weight="700" fill="#fff" text-anchor="middle">✔ طلب جديد</text>` +
+    product('battery', 930, 1050, 100, 100) +
+    `<text x="910" y="1095" font-size="32" font-family="IBM Plex Sans Arabic" font-weight="700" fill="${C.ink}" text-anchor="start">بطارية 5000 مللي</text>
+     <text x="910" y="1140" font-size="30" font-family="IBM Plex Sans Arabic" font-weight="700" fill="${C.teal}" text-anchor="start">150 ج.م × 1</text>`, botIn);
+  popAt(order, S('m6') - .05, { until: S('m7') - .2, origin: [835, 1075] });
+  const spark = G(`<path d="M590,1020 l10,-28 l10,28 l28,10 l-28,10 l-10,28 l-10,-28 l-28,-10 Z" fill="${C.amber}" stroke-width="4"/>
+    <path d="M300,1040 l7,-20 l7,20 l20,7 l-20,7 l-7,20 l-7,-20 l-20,-7 Z" fill="${C.amber}" stroke-width="4"/>`, botIn);
+  popAt(spark, F('m6', .15), { until: S('m7') - .2 });
+
+  // closing card drops over the living room
+  const cta = E('g', {}, world);
+  cta.innerHTML = `<rect x="0" y="0" width="1080" height="915" fill="#FDFDFB" stroke="none"/>`;
+  E('image', { href: 'assets/listgo-logo.png', x: 250, y: 60, width: 580, height: 208 }, cta);
+  const ctaA = G(`<text x="540" y="430" font-size="62" font-family="Marhey" font-weight="700" fill="${C.ink}" text-anchor="middle">قايمة أسعار محلّك في لينك واحد</text>
+    <path d="M180,470 Q540,445 900,472" stroke="${C.amber}" stroke-width="14"/>`, cta);
+  const ctaB = G(`<text x="540" y="380" font-size="88" font-family="Marhey" font-weight="700" fill="${C.ink}" text-anchor="middle">جرّب ببلاش 14 يوم</text>
+    <text x="580" y="472" font-size="58" font-family="Marhey" font-weight="700" fill="${C.ink}" text-anchor="middle">ومن غير فيزا</text>
+    <rect x="250" y="418" width="110" height="74" rx="10" fill="${C.amberL}"/><path d="M250,442 H360" stroke-width="9"/><path d="M240,506 L372,404" stroke="${C.red}" stroke-width="8"/>`, cta);
+  const btn = G(`<rect x="270" y="530" width="540" height="130" rx="65" fill="${C.teal}" stroke-width="6"/>
+    <text x="540" y="618" font-size="64" font-family="Marhey" font-weight="700" fill="#fff" text-anchor="middle">ابدأ مجانًا</text>`, cta);
+  const url = G(`<text x="540" y="800" font-size="100" font-family="IBM Plex Sans Arabic" font-weight="700" fill="${C.ink}" text-anchor="middle" direction="ltr">listgo.shop</text>
+    <path d="M280,836 Q540,860 800,832" stroke="${C.amber}" stroke-width="13"/>`, cta);
+  const ctaIn = S('m7') - .25;
+  on(t => {
+    const p = ease.out(clamp((t - ctaIn) / .5));
+    cta.style.visibility = p > 0 ? 'visible' : 'hidden';
+    cta.setAttribute('transform', `translate(0 ${lerp(-930, 0, p)})`);
+    mark.style.opacity = 1 - p;
+    const b = clamp((t - S('m8') + .15) / .3);
+    ctaA.style.opacity = 1 - b; ctaB.style.opacity = b;
+    const bp = clamp((t - F('m8', .25)) / .4), pulse = t > F('m8', .8) ? 1 + Math.sin((t - F('m8', .8)) * 6) * .035 : 1;
+    btn.style.visibility = bp > 0 ? 'visible' : 'hidden';
+    btn.setAttribute('transform', `translate(540 595) scale(${(bp > 0 ? ease.back(bp) : .001) * pulse}) translate(-540 -595)`);
+    const up = clamp((t - F('m8', .6)) / .4);
+    url.style.opacity = up; url.setAttribute('transform', `translate(0 ${(1 - ease.out(up)) * 40})`);
+  });
+}
+
+/* ---------- captions ---------- */
+const capBox = document.getElementById('cap'), capWho = capBox.querySelector('b'), capTxt = capBox.querySelector('span');
+function caption(t) {
+  const sc = T.scenes.find(s => t >= s.start && t < s.start + s.dur) || T.scenes[T.scenes.length - 1];
+  const w = WHO[sc.who];
+  capWho.textContent = w.label; capWho.style.background = w.color; capTxt.style.borderColor = w.color;
+  capTxt.textContent = sc.caption;
+  const last = sc === T.scenes[T.scenes.length - 1];
+  capBox.style.opacity = clamp(Math.min((t - sc.start) / .12, last ? 1 : (sc.start + sc.dur - t) / .08));
+}
+
+function seek(t) { for (const fn of acts) fn(t); caption(t); }
+
+function fit() {
+  const k = Math.min(innerWidth / W, innerHeight / H), st = document.getElementById('stage');
+  st.style.transform = `scale(${k})`; st.style.left = (innerWidth - W * k) / 2 + 'px';
+}
+(async () => {
+  await Promise.all(['700 80px Marhey', '700 40px "IBM Plex Sans Arabic"', '600 40px "IBM Plex Sans Arabic"'].map(f => document.fonts.load(f, 'بكام ListGo 14')));
+  await new Promise(r => { const i = new Image(); i.onload = i.onerror = r; i.src = 'assets/listgo-logo.png'; });
+  build();
+  window.seek = seek; window.TOTAL = T.total;
+  if (!location.search.includes('render')) {
+    fit(); addEventListener('resize', fit);
+    const audio = T.audio ? new Audio(T.audio) : null, clock = document.getElementById('clock');
+    let t0 = 0;
+    const loop = now => {
+      const t = audio && !audio.paused ? audio.currentTime : (now - t0) / 1000;
+      seek(Math.min(t, T.total)); clock.textContent = t.toFixed(1) + ' / ' + T.total.toFixed(1) + 's';
+      if (t < T.total) requestAnimationFrame(loop);
+    };
+    document.getElementById('play').onclick = () => { t0 = performance.now(); if (audio) { audio.currentTime = 0; audio.play(); } requestAnimationFrame(loop); };
+    seek(0);
+  } else document.body.classList.add('render');
+  window.READY = true;
+})();
+</script>
+</body>
+</html>

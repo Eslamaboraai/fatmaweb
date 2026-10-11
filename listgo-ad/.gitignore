@@ -2,3 +2,4 @@ audio/
 frames/
 *.env
 render.log
+*.log
